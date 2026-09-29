@@ -50,6 +50,12 @@ other RINEX-like formats have their own parser:
 - Navigation is currently not feasible with Glonass, SBAS and IRNSS
 - File production might lack some features, mostly because we're currently focused on data processing
 
+## NAV parse diagnostics
+
+`Rinex::parse`, `Rinex::from_file`, and `Rinex::from_gzip_file` keep valid NAV records before and after a record with an invalid nonblank field in a known ephemeris layout. They reject the entire invalid record. Inspect `rinex.nav_parse_report().diagnostics()` and `rejected_records()` after reading; each field diagnostic includes the physical file line, slot, field name, original field text, and reason, plus SV, epoch, and message when parseable. `unsupported_records()` counts messages or time pairs without a supported layout separately. Non-NAV results have an empty report. The report describes the original parse and is not written to RINEX output.
+
+Use `parse_strict`, `from_file_strict`, or `from_gzip_file_strict` to return an error at the first rejected NAV record. I/O failures, lost record structure, and incomplete ephemeris rows fail in either mode. Explicit zero fields are retained; blank fields remain absent. These rules do not assert that every present broadcast field has been scientifically validated.
+
 ## Citation and referencing
 
 If you need to reference this work, please use the following model:
