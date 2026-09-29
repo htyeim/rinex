@@ -1,4 +1,4 @@
-//! Read a GPS or GLONASS NAV record, propagate it, and request ITRF2014 position.
+//! Read a supported NAV record, propagate it, and request an ITRF2014 position.
 //! cargo run --features nav --example nav_frame -- FILE G15 '2024-05-07T02:05:00 GPST'
 use rinex::{
     navigation::rinex::{
@@ -40,15 +40,19 @@ fn main() -> Result<(), Box<dyn Error>> {
         result.target_realization, result.epoch, result.position_km
     );
     println!(
-        "source_basis={:?} source_evidence={:?} method={:?} edges={:?} velocity_km_s={:?}",
+        "source_basis={:?} source_evidence={:?} position_status={:?} method={:?} edges={:?} velocity_km_s={:?}",
         result.source_basis,
         result.source_evidence,
+        result.position_status(),
         result.method,
         result.edge_ids,
         result.velocity_km_s
     );
     if let Some(note) = result.position_accuracy_note {
         println!("{note}");
+    }
+    if let Some(assumption) = result.assumption {
+        println!("assumption_id={} scope={}", assumption.id, assumption.scope);
     }
     Ok(())
 }

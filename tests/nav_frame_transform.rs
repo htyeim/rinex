@@ -274,11 +274,14 @@ fn navic_nav_state_cannot_enter_gps_frame_path() {
     let t = Epoch::from_str("2023-03-12T00:00:00 GPST").unwrap();
     let report =
         nav.nav_select_ephemeris(SV::from_str("I02").unwrap(), t, UnknownHealthPolicy::Reject);
+    let native = report.chosen().unwrap().spatial_state_at(t).unwrap();
     assert_eq!(
-        report.chosen().unwrap().spatial_state_at(t).unwrap_err(),
-        rinex::navigation::rinex::spatial_state::SpatialStateError::Gps(
-            rinex::navigation::rinex::selection::StateError::UnsupportedMessage
-        )
+        native.state.source(),
+        SourceFrameIdentity::NavicBroadcastWgs84
+    );
+    assert_eq!(
+        native.state.to_frame(FrameRequest::Wgs84).unwrap_err(),
+        FrameError::UnsupportedSource(SourceFrameIdentity::NavicBroadcastWgs84)
     );
 }
 

@@ -13,12 +13,13 @@ fn supported(key: &NavKey, major: u8) -> Option<(f64, NativeFrame, u8)> {
         return None;
     }
     if key.sv.constellation.is_sbas() {
-        let message = if major >= 4 {
-            NavMessageType::SBAS
-        } else {
-            LNAV
-        };
-        return (key.msgtype == message).then_some((360.0, NativeFrame::SbasBroadcast, 0));
+        // RINEX 4 uses SBAS EPH, while a legacy LNAV key can carry the
+        // same GEO ephemeris fields after ingestion or a version transition.
+        return matches!(key.msgtype, NavMessageType::SBAS | LNAV).then_some((
+            360.0,
+            NativeFrame::SbasBroadcast,
+            0,
+        ));
     }
     let version_ok = match (key.sv.constellation, key.msgtype) {
         (Glonass, FDMA) | (Galileo, INAV | FNAV) | (BeiDou, D1 | D2) => major >= 4,

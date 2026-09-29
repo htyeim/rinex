@@ -139,7 +139,7 @@ fn asserted_pz9011_uses_same_edge_and_strict_requests_reject_it() {
     for (options, error) in [
         (
             TransformOptions {
-                numerical_only: true,
+                method: rinex::navigation::rinex::spatial_state::MethodPolicy::NumericalOnly,
                 ..Default::default()
             },
             FrameError::ApproximationExcluded,
@@ -158,13 +158,6 @@ fn asserted_pz9011_uses_same_edge_and_strict_requests_reject_it() {
             },
             FrameError::VelocityUnavailable,
         ),
-        (
-            TransformOptions {
-                warnings_as_errors: true,
-                ..Default::default()
-            },
-            FrameError::WarningRejected,
-        ),
     ] {
         assert_eq!(
             FrameTransformer
@@ -173,6 +166,14 @@ fn asserted_pz9011_uses_same_edge_and_strict_requests_reject_it() {
             error
         );
     }
+    assert!(matches!(
+        FrameTransformer.to_frame(
+            &point,
+            target,
+            TransformOptions { warnings_as_errors: true, ..Default::default() },
+        ),
+        Err(FrameError::WarningRejected(note)) if note.contains("CAUTION")
+    ));
     let unresolved = SpatialPoint::new(
         point.position_km,
         epoch(),
