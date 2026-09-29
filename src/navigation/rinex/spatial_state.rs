@@ -2,13 +2,20 @@
 //!
 //! A frame family name alone is not a frame realization: GPS and NavIC
 //! broadcasts can both carry a WGS-84 family label.
-use super::selection::{NativeFrame, NavCandidate, StateError};
-use crate::{navigation::NavKey, prelude::Epoch};
+use super::{
+    glonass_fdma::FdmaError,
+    selection::{NativeFrame, NavCandidate, StateError},
+};
+use crate::{
+    navigation::{NavKey, NavMessageType},
+    prelude::{Constellation, Epoch},
+};
 
 /// The broadcasting system that defines the native terrestrial axes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SourceFrameIdentity {
     GpsBroadcastWgs84,
+    GlonassBroadcastPz90,
     NavicBroadcastWgs84,
     /// A concrete terrestrial realization asserted by a non-NAV caller.
     Realization(FrameId),
@@ -18,6 +25,7 @@ pub enum SourceFrameIdentity {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FrameId {
     Wgs84G2296,
+    Pz90_11,
     Itrf2020,
     Itrf2014,
 }
@@ -53,6 +61,7 @@ pub struct NavSpatialState {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SpatialStateError {
+    Fdma(FdmaError),
     Gps(StateError),
 }
 
@@ -64,12 +73,51 @@ impl std::fmt::Display for SpatialStateError {
 impl std::error::Error for SpatialStateError {}
 
 impl NavCandidate<'_> {
-    /// Reuse the selected GPS LNAV propagator; do not reselect it.
+    /// Reuse the selected GPS LNAV or GLONASS FDMA propagator; do not reselect it.
     pub fn spatial_state_at(&self, t: Epoch) -> Result<NavSpatialState, SpatialStateError> {
-        let native = self.native_state_at(t).map_err(SpatialStateError::Gps)?;
-        let g2296 = self.orbit_reference.is_some_and(in_g2296_window)
-            && in_g2296_window(self.key.epoch)
-            && in_g2296_window(t);
+        let (native_frame, source, realization, source_evidence, position_km, velocity_km_s) =
+            match (self.key.sv.constellation, self.key.msgtype) {
+                (Constellation::GPS, NavMessageType::LNAV) => {
+                    let native = self.native_state_at(t).map_err(SpatialStateError::Gps)?;
+                    let g2296 = self.orbit_reference.is_some_and(in_g2296_window)
+                        && in_g2296_window(self.key.epoch)
+                        && in_g2296_window(t);
+                    (
+                        native.frame,
+                        SourceFrameIdentity::GpsBroadcastWgs84,
+                        if g2296 {
+                            FrameRealization::Known(FrameId::Wgs84G2296)
+                        } else {
+                            FrameRealization::Unknown
+                        },
+                        g2296.then_some(G2296_SOURCE_EVIDENCE),
+                        native.position_km,
+                        native.velocity_km_s,
+                    )
+                },
+                (Constellation::Glonass, NavMessageType::FDMA | NavMessageType::LNAV) => {
+                    if let Some(reason) = self.rejection {
+                        return Err(SpatialStateError::Fdma(FdmaError::Rejected(reason)));
+                    }
+                    let native = self.fdma_state_at(t).map_err(SpatialStateError::Fdma)?;
+                    let pz9011 = self.orbit_reference.is_some_and(in_pz9011_window)
+                        && in_pz9011_window(self.key.epoch)
+                        && in_pz9011_window(t);
+                    (
+                        native.frame,
+                        SourceFrameIdentity::GlonassBroadcastPz90,
+                        if pz9011 {
+                            FrameRealization::Known(FrameId::Pz90_11)
+                        } else {
+                            FrameRealization::Unknown
+                        },
+                        pz9011.then_some(PZ9011_SOURCE_EVIDENCE),
+                        native.position_km,
+                        native.velocity_km_s,
+                    )
+                },
+                _ => return Err(SpatialStateError::Gps(StateError::UnsupportedMessage)),
+            };
         Ok(NavSpatialState {
             key: *self.key,
             orbit_reference: self.orbit_reference,
@@ -77,16 +125,12 @@ impl NavCandidate<'_> {
             record_epoch: self.key.epoch,
             state: BroadcastFixedState {
                 epoch: t,
-                native_frame: native.frame,
-                source: SourceFrameIdentity::GpsBroadcastWgs84,
-                realization: if g2296 {
-                    FrameRealization::Known(FrameId::Wgs84G2296)
-                } else {
-                    FrameRealization::Unknown
-                },
-                source_evidence: g2296.then_some(G2296_SOURCE_EVIDENCE),
-                position_km: native.position_km,
-                velocity_km_s: native.velocity_km_s,
+                native_frame,
+                source,
+                realization,
+                source_evidence,
+                position_km,
+                velocity_km_s,
             },
         })
     }
@@ -104,6 +148,8 @@ pub enum FrameMethod {
     Native,
     Helmert,
     Composite,
+    /// Published parameters held fixed beyond their reference epoch; no validated error bound.
+    UnboundedApproximate,
 }
 
 /// A target state. Unknown realization remains explicit rather than inventing Gxxxx.
@@ -162,6 +208,8 @@ pub enum SourceBasis {
 pub struct TransformOptions {
     pub max_position_error_m: Option<f64>,
     pub require_velocity: bool,
+    pub numerical_only: bool,
+    pub warnings_as_errors: bool,
 }
 
 impl Default for TransformOptions {
@@ -169,6 +217,8 @@ impl Default for TransformOptions {
         Self {
             max_position_error_m: None,
             require_velocity: false,
+            numerical_only: false,
+            warnings_as_errors: false,
         }
     }
 }
@@ -249,6 +299,8 @@ pub enum FrameError {
     PositionBoundUnavailable,
     InvalidPositionBound,
     VelocityUnavailable,
+    ApproximationExcluded,
+    WarningRejected,
     InconsistentFrame,
     NonFiniteState,
 }
@@ -279,8 +331,10 @@ impl BroadcastFixedState {
     /// Use the same fixed frame converter as generic spatial points.
     /// This convenience call keeps the native state and its NavKey untouched.
     pub fn to_frame(&self, target: FrameRequest) -> Result<FrameResult, FrameError> {
-        if self.source == SourceFrameIdentity::GpsBroadcastWgs84
-            && self.native_frame != NativeFrame::GpsBroadcastWgs84
+        if (self.source == SourceFrameIdentity::GpsBroadcastWgs84
+            && self.native_frame != NativeFrame::GpsBroadcastWgs84)
+            || (self.source == SourceFrameIdentity::GlonassBroadcastPz90
+                && self.native_frame != NativeFrame::GlonassBroadcastPz90)
         {
             return Err(FrameError::InconsistentFrame);
         }
@@ -292,8 +346,10 @@ impl BroadcastFixedState {
     }
 }
 
-const CATALOG_VERSION: &str = "GPS-G2296-ITRF2020-ITRF2014-2024-v1";
+const CATALOG_VERSION: &str = "GPS-G2296-PZ9011-ITRF2020-ITRF2014-v2";
 const G2296_SOURCE_EVIDENCE: &str = "https://www.navcen.uscg.gov/gps-constellation (NANU 2024014)";
+const PZ9011_SOURCE_EVIDENCE: &str = "https://www.unoosa.org/documents/pdf/icg/2023/ICG-17/icg17_wgd_02_03.pdf; https://www.unoosa.org/pdf/icg/2016/icg11/wgd/13wgd.pdf";
+const PZ9011_TO_ITRF2014: &str = "ICG:2018:PZ90.11-to-ITRF2014:static-2010-approx";
 const G2296_TO_ITRF2020: &str = "EPSG:10608";
 const ITRF2020_TO_ITRF2014: &str = "ITRF2020:Table2:2015.0";
 const NATIVE_EDGES: &[&str] = &[];
@@ -303,6 +359,7 @@ const ITRF_EDGE: &[&str] = &[ITRF2020_TO_ITRF2014];
 const ITRF_INVERSE_EDGE: &[&str] = &["ITRF2020:Table2:2015.0:inverse"];
 const G2296_THEN_ITRF: &[&str] = &[G2296_TO_ITRF2020, ITRF2020_TO_ITRF2014];
 const ITRF_THEN_G2296: &[&str] = &["ITRF2020:Table2:2015.0:inverse", "EPSG:10608:inverse"];
+const PZ9011_EDGE: &[&str] = &[PZ9011_TO_ITRF2014];
 const G2296_INFO: FrameEdgeInfo = FrameEdgeInfo {
     id: G2296_TO_ITRF2020,
     source: FrameId::Wgs84G2296,
@@ -337,6 +394,18 @@ const ITRF_INVERSE_INFO: FrameEdgeInfo = FrameEdgeInfo {
     target: FrameId::Itrf2020,
     ..ITRF_INFO
 };
+const PZ9011_INFO: FrameEdgeInfo = FrameEdgeInfo {
+    id: PZ9011_TO_ITRF2014,
+    source: FrameId::Pz90_11,
+    target: FrameId::Itrf2014,
+    method: FrameMethod::UnboundedApproximate,
+    parameter_reference_epoch: "2010.0; parameters frozen at later coordinate epochs",
+    valid_window: "2014-01-15 through 2024-12-31 UTC (conservative library policy)",
+    source_url:
+        "https://www.unoosa.org/documents/pdf/icg/2019/resources/PZ-90.11_v.1.2_04.11.2018.pdf",
+    position_metric: "2010.0 ground-station fit; no strict satellite or later-epoch error bound",
+    velocity_capability: "not established",
+};
 const NATIVE_INFO: &[FrameEdgeInfo] = &[];
 const G2296_INFO_PATH: &[FrameEdgeInfo] = &[G2296_INFO];
 const G2296_INVERSE_INFO_PATH: &[FrameEdgeInfo] = &[G2296_INVERSE_INFO];
@@ -344,6 +413,7 @@ const ITRF_INFO_PATH: &[FrameEdgeInfo] = &[ITRF_INFO];
 const ITRF_INVERSE_INFO_PATH: &[FrameEdgeInfo] = &[ITRF_INVERSE_INFO];
 const G2296_THEN_ITRF_INFO: &[FrameEdgeInfo] = &[G2296_INFO, ITRF_INFO];
 const ITRF_THEN_G2296_INFO: &[FrameEdgeInfo] = &[ITRF_INVERSE_INFO, G2296_INVERSE_INFO];
+const PZ9011_INFO_PATH: &[FrameEdgeInfo] = &[PZ9011_INFO];
 
 /// Fixed, offline, narrowly dated terrestrial-frame parameter catalogue.
 /// It uses no ANISE frame or kernel: these GNSS realizations are not ANISE frames.
@@ -402,6 +472,14 @@ impl FrameTransformer {
             SourceFrameIdentity::GpsBroadcastWgs84 => {
                 return Err(FrameError::UnknownSourceRealization)
             },
+            SourceFrameIdentity::GlonassBroadcastPz90
+                if point.realization == FrameRealization::Known(FrameId::Pz90_11) =>
+            {
+                FrameId::Pz90_11
+            },
+            SourceFrameIdentity::GlonassBroadcastPz90 => {
+                return Err(FrameError::UnknownSourceRealization)
+            },
             other => return Err(FrameError::UnsupportedSource(other)),
         };
         let target_id = match request {
@@ -421,6 +499,47 @@ impl FrameTransformer {
                 options,
             );
         }
+        if source_id == FrameId::Pz90_11 && target_id == FrameId::Itrf2014 {
+            if !in_pz9011_window(point.epoch) {
+                return Err(FrameError::OutsideCatalogWindow);
+            }
+            if options.numerical_only {
+                return Err(FrameError::ApproximationExcluded);
+            }
+            if options.max_position_error_m.is_some() {
+                return Err(FrameError::PositionBoundUnavailable);
+            }
+            if options.require_velocity {
+                return Err(FrameError::VelocityUnavailable);
+            }
+            if options.warnings_as_errors {
+                return Err(FrameError::WarningRejected);
+            }
+            let position_km = pz9011_to_itrf2014_approx(point.position_km);
+            if !position_km.iter().all(|v| v.is_finite()) {
+                return Err(FrameError::NonFiniteState);
+            }
+            return Ok(FrameResult {
+                epoch: point.epoch,
+                source: point.source,
+                target: target_identity,
+                source_realization: FrameRealization::Known(FrameId::Pz90_11),
+                target_realization: FrameRealization::Known(FrameId::Itrf2014),
+                position_km,
+                velocity_km_s: None,
+                method: FrameMethod::UnboundedApproximate,
+                catalog_version: CATALOG_VERSION,
+                edge_ids: PZ9011_EDGE,
+                edge_info: PZ9011_INFO_PATH,
+                source_basis: point.source_basis,
+                source_evidence: point.source_evidence,
+                position_accuracy_note: Some("CAUTION: 2010.0 PZ-90.11 to ITRF2014 ground-station parameters are held fixed at this coordinate epoch; no strict satellite or later-epoch error bound is available."),
+                velocity_note: Some("cross-frame velocity is not validated"),
+            });
+        }
+        if source_id == FrameId::Pz90_11 || target_id == FrameId::Pz90_11 {
+            return Err(FrameError::NoPath);
+        }
         let uses_g2296 = source_id == FrameId::Wgs84G2296 || target_id == FrameId::Wgs84G2296;
         if (uses_g2296 && !in_g2296_window(point.epoch))
             || (!uses_g2296 && !in_itrf_window(point.epoch))
@@ -439,10 +558,12 @@ impl FrameTransformer {
         let itrf2020 = match source_id {
             FrameId::Wgs84G2296 | FrameId::Itrf2020 => point.position_km,
             FrameId::Itrf2014 => itrf2014_to_2020(point.position_km, point.epoch),
+            FrameId::Pz90_11 => unreachable!("PZ-90.11 path returned above"),
         };
         let position_km = match target_id {
             FrameId::Wgs84G2296 | FrameId::Itrf2020 => itrf2020,
             FrameId::Itrf2014 => itrf2020_to_2014(itrf2020, point.epoch),
+            FrameId::Pz90_11 => unreachable!("PZ-90.11 path returned above"),
         };
         if !position_km.iter().all(|v| v.is_finite()) {
             return Err(FrameError::NonFiniteState);
@@ -521,6 +642,26 @@ fn native_result(
 fn in_g2296_window(epoch: Epoch) -> bool {
     epoch >= Epoch::from_gregorian_utc(2024, 3, 4, 0, 0, 0, 0)
         && epoch < Epoch::from_gregorian_utc(2025, 1, 1, 0, 0, 0, 0)
+}
+
+fn in_pz9011_window(epoch: Epoch) -> bool {
+    epoch >= Epoch::from_gregorian_utc(2014, 1, 15, 0, 0, 0, 0)
+        && epoch < Epoch::from_gregorian_utc(2025, 1, 1, 0, 0, 0, 0)
+}
+
+fn pz9011_to_itrf2014_approx(position_km: [f64; 3]) -> [f64; 3] {
+    // UNOOSA ICG 2018 PZ-90.11 v1.2: frame-rotation convention, 2010.0.
+    // Translation is metres; rotation is milliarcseconds. Published scale
+    // rounds to zero. Holding the parameters fixed is an unbounded approximation.
+    let [x, y, z] = position_km.map(|v| v * 1000.0);
+    let mas_to_rad = std::f64::consts::PI / (180.0 * 3600.0 * 1000.0);
+    let [rx, ry, rz] = [0.035 * mas_to_rad, -0.087 * mas_to_rad, 0.036 * mas_to_rad];
+    let [dx, dy, dz] = [-0.0053, -0.0040, -0.0032];
+    [
+        (x + rz * y - ry * z + dx) / 1000.0,
+        (y - rz * x + rx * z + dy) / 1000.0,
+        (z + ry * x - rx * y + dz) / 1000.0,
+    ]
 }
 
 fn in_itrf_window(epoch: Epoch) -> bool {

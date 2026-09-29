@@ -1,4 +1,4 @@
-//! Read a GPS NAV record, propagate it, and request ITRF2014 position.
+//! Read a GPS or GLONASS NAV record, propagate it, and request ITRF2014 position.
 //! cargo run --features nav --example nav_frame -- FILE G15 '2024-05-07T02:05:00 GPST'
 use rinex::{
     navigation::rinex::{
@@ -11,8 +11,8 @@ use std::{error::Error, str::FromStr};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut args = std::env::args().skip(1);
-    let file = args.next().ok_or("usage: nav_frame FILE GPS_SV EPOCH")?;
-    let sv = SV::from_str(&args.next().ok_or("missing GPS SV")?)?;
+    let file = args.next().ok_or("usage: nav_frame FILE SV EPOCH")?;
+    let sv = SV::from_str(&args.next().ok_or("missing SV")?)?;
     let epoch = Epoch::from_str(&args.next().ok_or("missing epoch")?)?;
     if args.next().is_some() {
         return Err("unexpected argument".into());
@@ -22,8 +22,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     } else {
         Rinex::from_file(&file)?
     };
-    let report = nav.nav_select_gps_lnav(sv, epoch, UnknownHealthPolicy::Reject);
-    let candidate = report.chosen().ok_or("no propagatable GPS LNAV record")?;
+    let report = nav.nav_select_ephemeris(sv, epoch, UnknownHealthPolicy::Reject);
+    let candidate = report
+        .chosen()
+        .ok_or("no propagatable supported NAV record")?;
     let native = candidate.spatial_state_at(epoch)?;
     let result = native
         .state
@@ -45,5 +47,8 @@ fn main() -> Result<(), Box<dyn Error>> {
         result.edge_ids,
         result.velocity_km_s
     );
+    if let Some(note) = result.position_accuracy_note {
+        println!("{note}");
+    }
     Ok(())
 }
