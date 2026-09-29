@@ -1,4 +1,4 @@
-//! Selection and native propagation for GPS LNAV broadcast ephemerides.
+//! Selection and native propagation for supported broadcast ephemerides.
 use crate::{
     navigation::{Ephemeris, NavKey, NavMessageType},
     prelude::{Constellation, Duration, Epoch, Rinex, SV},
@@ -9,6 +9,8 @@ use crate::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NativeFrame {
     GpsBroadcastWgs84,
+    /// GLONASS broadcast PZ-90 axes; the record does not identify a realization.
+    GlonassBroadcastPz90,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -24,6 +26,7 @@ pub enum NavRejection {
     MissingOrbitField,
     UnknownHealth,
     Unhealthy,
+    InvalidData,
     OutOfValidity,
     LowerRank,
     Unpropagatable,
@@ -184,6 +187,81 @@ impl Rinex {
                 let rank = ((t - toe.unwrap()).abs(), *key);
                 if best.as_ref().is_none_or(|(_, d, k)| rank < (*d, *k)) {
                     best = Some((index, rank.0, rank.1));
+                }
+            }
+        }
+        let selected = best.map(|v| v.0);
+        for (index, candidate) in candidates.iter_mut().enumerate() {
+            if candidate.rejection.is_none() && selected != Some(index) {
+                candidate.rejection = Some(NavRejection::LowerRank);
+            }
+        }
+        NavSelection {
+            candidates,
+            selected,
+        }
+    }
+
+    /// Select a GLONASS FDMA (or legacy LNAV) record usable for native state.
+    /// The exclusive 900 s half-window is an integration policy, not an
+    /// accuracy guarantee. Other GLONASS message families are rejected.
+    pub fn nav_select_glonass_fdma(
+        &self,
+        sv: SV,
+        t: Epoch,
+        unknown: UnknownHealthPolicy,
+    ) -> NavSelection<'_> {
+        use crate::navigation::glonass::GlonassHealth;
+
+        let mut candidates = Vec::new();
+        let mut best: Option<(usize, Duration, u8, NavKey)> = None;
+        for (key, eph) in self
+            .nav_ephemeris_frames_iter()
+            .filter(|(key, _)| key.sv == sv)
+        {
+            let supported = key.sv.constellation == Constellation::Glonass
+                && matches!(key.msgtype, NavMessageType::FDMA | NavMessageType::LNAV)
+                && key.subtype.is_none();
+            let health = eph
+                .orbits
+                .get("health")
+                .and_then(|item| item.as_glonass_health_flag())
+                .map(|flag| !flag.intersects(GlonassHealth::UNHEALTHY));
+            let mut rejection = if !supported {
+                Some(NavRejection::UnsupportedMessage)
+            } else if !super::glonass_fdma::fields_present(eph) {
+                Some(NavRejection::MissingOrbitField)
+            } else if health == Some(false) {
+                Some(NavRejection::Unhealthy)
+            } else if health.is_none() && unknown == UnknownHealthPolicy::Reject {
+                Some(NavRejection::UnknownHealth)
+            } else if eph.get_orbit_f64("dataValidity").is_some_and(|v| v != 0.0) {
+                Some(NavRejection::InvalidData)
+            } else if (t - key.epoch).abs() >= Duration::from_seconds(900.0) {
+                Some(NavRejection::OutOfValidity)
+            } else {
+                None
+            };
+            let index = candidates.len();
+            let mut candidate = NavCandidate {
+                key,
+                ephemeris: eph,
+                orbit_reference: supported.then_some(key.epoch),
+                rejection,
+            };
+            if rejection.is_none() && candidate.fdma_state_at(t).is_err() {
+                rejection = Some(NavRejection::Unpropagatable);
+                candidate.rejection = rejection;
+            }
+            candidates.push(candidate);
+            if rejection.is_none() {
+                let rank = (
+                    (t - key.epoch).abs(),
+                    u8::from(key.msgtype == NavMessageType::LNAV),
+                    *key,
+                );
+                if best.as_ref().is_none_or(|(_, d, p, k)| rank < (*d, *p, *k)) {
+                    best = Some((index, rank.0, rank.1, rank.2));
                 }
             }
         }
