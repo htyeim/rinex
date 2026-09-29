@@ -65,8 +65,8 @@ From the rinex repository root:
 ```sh
 python3 tests/reference/nav_galileo_fnav_frame.py > /private/tmp/nav_galileo_fnav_frame_expected_check.json
 diff -u tests/reference/nav_galileo_fnav_frame_expected.json /private/tmp/nav_galileo_fnav_frame_expected_check.json
-cargo test --offline --locked --features nav,log --test nav_galileo_fnav_frame -- --nocapture
-cargo run --offline --locked --features nav --example nav_probe -- state tests/fixtures/nav_galileo_e08_fnav_2024128.rnx E08 '2024-05-07T00:40:00 GST' --target-frame ITRF2014 --details
+cargo test --offline --features nav,log --test nav_galileo_fnav_frame -- --nocapture
+cargo run --offline --features nav --example nav_frame -- tests/fixtures/nav_galileo_e08_fnav_2024128.rnx E08 '2024-05-07T00:40:00 GST'
 ```
 
 The CLI should report `msgtype: FNAV`, `GalileoGtrf23v01`, `Itrf2014`,

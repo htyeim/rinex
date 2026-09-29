@@ -242,7 +242,6 @@ pub enum FrameMethod {
     Native,
     Helmert,
     Composite,
-    BoundedApproximate,
     /// Numerically evaluated position with no validated epoch/domain error bound.
     UnboundedApproximate,
 }
@@ -328,9 +327,7 @@ impl FrameResult {
             match self.method {
                 FrameMethod::Native => PositionStatus::NativeIdentity,
                 FrameMethod::Helmert | FrameMethod::Composite => PositionStatus::NumericalTransform,
-                FrameMethod::BoundedApproximate | FrameMethod::UnboundedApproximate => {
-                    PositionStatus::MarkedApproximation
-                },
+                FrameMethod::UnboundedApproximate => PositionStatus::MarkedApproximation,
             }
         }
     }
@@ -453,7 +450,6 @@ pub enum FrameError {
     OutsideCatalogWindow,
     NoPath,
     PositionBoundUnavailable,
-    PositionBoundExceeded,
     InvalidPositionBound,
     ApproximationExcluded,
     DomainNotApplicable,
@@ -792,7 +788,6 @@ impl FrameTransformer {
             qualify_path(
                 PathEvidence {
                     method: FrameMethod::UnboundedApproximate,
-                    metric: PositionMetric::Unbounded,
                     domain: PathDomain::NavBroadcastSatellite,
                 },
                 point,
@@ -840,7 +835,6 @@ impl FrameTransformer {
             qualify_path(
                 PathEvidence {
                     method: FrameMethod::UnboundedApproximate,
-                    metric: PositionMetric::Unbounded,
                     domain: PathDomain::NavBroadcastSatellite,
                 },
                 point,
@@ -951,7 +945,6 @@ impl FrameTransformer {
             qualify_path(
                 PathEvidence {
                     method: FrameMethod::UnboundedApproximate,
-                    metric: PositionMetric::Unbounded,
                     domain: PathDomain::AnyEarthFixed,
                 },
                 point,
@@ -993,7 +986,6 @@ impl FrameTransformer {
             qualify_path(
                 PathEvidence {
                     method: FrameMethod::UnboundedApproximate,
-                    metric: PositionMetric::Unbounded,
                     domain: PathDomain::AnyEarthFixed,
                 },
                 point,
@@ -1037,7 +1029,6 @@ impl FrameTransformer {
             qualify_path(
                 PathEvidence {
                     method: FrameMethod::UnboundedApproximate,
-                    metric: PositionMetric::Unbounded,
                     domain: PathDomain::AnyEarthFixed,
                 },
                 point,
@@ -1075,7 +1066,6 @@ impl FrameTransformer {
             qualify_path(
                 PathEvidence {
                     method: FrameMethod::UnboundedApproximate,
-                    metric: PositionMetric::Unbounded,
                     domain: PathDomain::AnyEarthFixed,
                 },
                 point,
@@ -1124,7 +1114,6 @@ impl FrameTransformer {
         qualify_path(
             PathEvidence {
                 method: FrameMethod::Helmert,
-                metric: PositionMetric::Unbounded,
                 domain: PathDomain::AnyEarthFixed,
             },
             point,
@@ -1197,14 +1186,6 @@ impl FrameTransformer {
     }
 }
 
-#[allow(dead_code)] // The fixed v1 catalogue installs only the numerical edge.
-#[derive(Clone, Copy)]
-enum PositionMetric {
-    Unbounded,
-    Rms,
-    UpperBound(f64),
-}
-
 #[allow(dead_code)] // A satellite-only edge is exercised with a synthetic candidate.
 #[derive(Clone, Copy)]
 enum PathDomain {
@@ -1215,22 +1196,17 @@ enum PathDomain {
 #[derive(Clone, Copy)]
 struct PathEvidence {
     method: FrameMethod,
-    metric: PositionMetric,
     domain: PathDomain,
 }
 
-/// Shared option gate; synthetic candidate tests below exercise the decisions
-/// without installing unsupported approximate edges in the public catalogue.
+/// Shared option gate for the installed numerical and unbounded paths.
 fn qualify_path(
     evidence: PathEvidence,
     point: &SpatialPoint,
     options: TransformOptions,
 ) -> Result<(), FrameError> {
     if options.method == MethodPolicy::NumericalOnly
-        && matches!(
-            evidence.method,
-            FrameMethod::BoundedApproximate | FrameMethod::UnboundedApproximate
-        )
+        && evidence.method == FrameMethod::UnboundedApproximate
     {
         return Err(FrameError::ApproximationExcluded);
     }
@@ -1242,15 +1218,8 @@ fn qualify_path(
             }
         },
     }
-    if let Some(limit) = options.max_position_error_m {
-        match evidence.metric {
-            PositionMetric::Unbounded => return Err(FrameError::PositionBoundUnavailable),
-            PositionMetric::Rms => return Err(FrameError::PositionBoundUnavailable),
-            PositionMetric::UpperBound(bound) if bound > limit => {
-                return Err(FrameError::PositionBoundExceeded)
-            },
-            PositionMetric::UpperBound(_) => {},
-        }
+    if options.max_position_error_m.is_some() {
+        return Err(FrameError::PositionBoundUnavailable);
     }
     Ok(())
 }
@@ -1438,7 +1407,7 @@ mod tests {
     }
 
     #[test]
-    fn synthetic_approximation_evidence_is_filtered_by_method_domain_and_bound() {
+    fn unbounded_approximation_is_filtered_by_method_domain_and_bound() {
         let direct = SpatialPoint::new(
             [10000.0; 3],
             Epoch::from_gregorian_utc(2024, 5, 7, 0, 0, 0, 0),
@@ -1446,20 +1415,19 @@ mod tests {
             None,
         )
         .unwrap();
-        let synthetic = PathEvidence {
-            method: FrameMethod::BoundedApproximate,
-            metric: PositionMetric::UpperBound(2.0),
+        let evidence = PathEvidence {
+            method: FrameMethod::UnboundedApproximate,
             domain: PathDomain::NavBroadcastSatellite,
         };
         assert_eq!(
-            qualify_path(synthetic, &direct, TransformOptions::default()),
+            qualify_path(evidence, &direct, TransformOptions::default()),
             Err(FrameError::DomainNotApplicable)
         );
         let mut nav = direct;
         nav.source_basis = SourceBasis::NavMessageAndCatalogDate;
         assert_eq!(
             qualify_path(
-                synthetic,
+                evidence,
                 &nav,
                 TransformOptions {
                     method: MethodPolicy::NumericalOnly,
@@ -1470,32 +1438,7 @@ mod tests {
         );
         assert_eq!(
             qualify_path(
-                synthetic,
-                &nav,
-                TransformOptions {
-                    max_position_error_m: Some(2.0),
-                    ..Default::default()
-                }
-            ),
-            Ok(())
-        );
-        assert_eq!(
-            qualify_path(
-                synthetic,
-                &nav,
-                TransformOptions {
-                    max_position_error_m: Some(1.9),
-                    ..Default::default()
-                }
-            ),
-            Err(FrameError::PositionBoundExceeded)
-        );
-        assert_eq!(
-            qualify_path(
-                PathEvidence {
-                    metric: PositionMetric::Rms,
-                    ..synthetic
-                },
+                evidence,
                 &nav,
                 TransformOptions {
                     max_position_error_m: Some(2.0),

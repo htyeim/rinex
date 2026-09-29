@@ -73,7 +73,7 @@ fn real_c05_d2_geo_position_and_velocity_match_reference() {
 #[test]
 fn geo_week_boundary_and_zero_harmonics_have_analytic_position() {
     let (mut nav, sv) = record();
-    let (_, frame) = nav.record.as_mut_nav().unwrap().iter_mut().next().unwrap();
+    let (mut key, mut frame) = nav.record.as_mut_nav().unwrap().pop_first().unwrap();
     let eph = frame.as_mut_ephemeris().unwrap();
     let a = eph.get_orbit_f64("sqrta").unwrap().powi(2);
     for field in [
@@ -84,6 +84,10 @@ fn geo_week_boundary_and_zero_harmonics_have_analytic_position() {
     }
     eph.orbits.insert("toe".into(), 604790.0.into());
     let toe = eph.toe(sv).unwrap();
+    // The synthetic orbit crosses the week boundary; move its synthetic ToC
+    // with ToE so the independent clock-window rule does not mask orbit math.
+    key.epoch = toe;
+    nav.record.as_mut_nav().unwrap().insert(key, frame);
     let report = nav.nav_select_ephemeris(sv, toe, UnknownHealthPolicy::Reject);
     let chosen = report.chosen().unwrap();
     let state = chosen.kepler_state_at(toe).unwrap();

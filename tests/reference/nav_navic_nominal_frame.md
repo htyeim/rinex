@@ -57,9 +57,9 @@ the true NavIC-to-ITRF2014 frame offset or physical accuracy.
 shasum -a 256 tests/fixtures/nav_navic_i02_2023071.rnx
 python3 tests/reference/nav_navic_lnav.py > /private/tmp/nav_navic_lnav_expected_check.json
 diff -u tests/reference/nav_navic_lnav_expected.json /private/tmp/nav_navic_lnav_expected_check.json
-cargo test --offline --locked --features nav,log --test nav_navic_nominal_frame -- --nocapture
-cargo run --offline --locked --features nav --example nav_probe -- state tests/fixtures/nav_navic_i02_2023071.rnx I02 '2023-03-12T00:00:00 GPST' --target-frame ITRF2014 --details
-cargo run --offline --locked --features nav --example nav_probe -- state tests/fixtures/nav_navic_i02_2023071.rnx I02 '2023-03-12T00:00:00 GPST' --target-frame ITRF2014 --warnings-as-errors
+cargo test --offline --features nav,log --test nav_navic_nominal_frame -- --nocapture
+cargo run --offline --features nav --example nav_frame -- tests/fixtures/nav_navic_i02_2023071.rnx I02 '2023-03-12T00:00:00 GPST'
+cargo run --offline --features nav --example nav_frame -- tests/fixtures/nav_navic_i02_2023071.rnx I02 '2023-03-12T00:00:00 GPST' --warnings-as-errors
 ```
 
 The default CLI should display `source_realization=Unknown`,

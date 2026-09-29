@@ -219,7 +219,7 @@ use crate::{
 #[cfg(docsrs)]
 pub use bibliography::Bibliography;
 
-#[cfg(doc)]
+#[cfg(all(doc, feature = "qc"))]
 use crate::prelude::qc::Merge;
 
 /// Parse a floating point number from a string, handling Fortran-style 'D'/'d'

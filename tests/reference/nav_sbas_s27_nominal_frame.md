@@ -51,9 +51,9 @@ bound the true GAGAN-to-ITRF2014 frame offset.
 shasum -a 256 tests/fixtures/nav_sbas_s27_2023071.rnx
 python3 tests/reference/nav_sbas_s27.py > /private/tmp/nav_sbas_s27_expected_check.json
 diff -u tests/reference/nav_sbas_s27_expected.json /private/tmp/nav_sbas_s27_expected_check.json
-cargo test --offline --locked --features nav,log --test nav_sbas_nominal_frame -- --nocapture
-cargo run --offline --locked --features nav,log --example nav_probe -- state tests/fixtures/nav_sbas_s27_2023071.rnx S27 '2023-03-12T01:17:44 GPST' --target-frame ITRF2014 --details
-cargo run --offline --locked --features nav,log --example nav_probe -- state tests/fixtures/nav_sbas_s27_2023071.rnx S27 '2023-03-12T01:17:44 GPST' --target-frame ITRF2014 --warnings-as-errors
+cargo test --offline --features nav,log --test nav_sbas_nominal_frame -- --nocapture
+cargo run --offline --features nav,log --example nav_frame -- tests/fixtures/nav_sbas_s27_2023071.rnx S27 '2023-03-12T01:17:44 GPST'
+cargo run --offline --features nav,log --example nav_frame -- tests/fixtures/nav_sbas_s27_2023071.rnx S27 '2023-03-12T01:17:44 GPST' --warnings-as-errors
 ```
 
 The default CLI should show `source_realization=Unknown`,

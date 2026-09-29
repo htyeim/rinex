@@ -149,12 +149,12 @@ impl Rinex {
                 Some(NavRejection::InvalidData)
             } else if (t - reference.unwrap()).abs() >= half.unwrap() {
                 Some(NavRejection::OutOfValidity)
-            } else if matches!(
-                key.sv.constellation,
-                Constellation::QZSS | Constellation::IRNSS
-            ) && (t - key.epoch).abs() >= half.unwrap()
+            } else if !matches!(key.sv.constellation, Constellation::Glonass)
+                && !key.sv.constellation.is_sbas()
+                && (t - key.epoch).abs() >= half.unwrap()
             {
-                // Clock and orbit have separate epochs and the same validity.
+                // Each supported Kepler message uses its own orbit policy
+                // window for both ToE and ToC; these are separate references.
                 Some(NavRejection::OutOfValidity)
             } else {
                 None

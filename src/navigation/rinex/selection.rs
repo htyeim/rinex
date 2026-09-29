@@ -82,6 +82,9 @@ impl NavCandidate<'_> {
         if (t - toe).abs() >= Duration::from_seconds(7200.0) {
             return Err(StateError::OutOfValidity);
         }
+        if (t - self.clock_reference).abs() >= Duration::from_seconds(7200.0) {
+            return Err(StateError::OutOfValidity);
+        }
         let eph = self.ephemeris;
         let helper = eph
             .helper(self.key.sv, t)
@@ -89,7 +92,7 @@ impl NavCandidate<'_> {
         let (position, velocity) = helper
             .position_velocity()
             .ok_or(StateError::InvalidElements)?;
-        let dt = (t - self.key.epoch).to_seconds();
+        let dt = (t - self.clock_reference).to_seconds();
         let clock =
             eph.clock_bias + eph.clock_drift * dt + eph.clock_drift_rate * dt * dt + helper.dtr;
         if !position
@@ -175,6 +178,8 @@ impl Rinex {
             } else if health.is_none() && unknown == UnknownHealthPolicy::Reject {
                 Some(NavRejection::UnknownHealth)
             } else if (t - toe.unwrap()).abs() >= Duration::from_seconds(7200.0) {
+                Some(NavRejection::OutOfValidity)
+            } else if (t - key.epoch).abs() >= Duration::from_seconds(7200.0) {
                 Some(NavRejection::OutOfValidity)
             } else {
                 None

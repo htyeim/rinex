@@ -59,12 +59,12 @@ From the rinex repository root:
 ```sh
 python3 tests/reference/nav_qzss_lnav.py > /private/tmp/nav_qzss_lnav_expected_n09d.json
 diff -u tests/reference/nav_qzss_lnav_expected.json /private/tmp/nav_qzss_lnav_expected_n09d.json
-cargo test --offline --locked --features nav,log --test nav_qzss_frame -- --nocapture
-cargo run --offline --locked --features nav --example nav_probe -- state tests/fixtures/nav_qzss_j02_2023071.rnx J02 '2023-03-12T00:00:00 QZSST' --target-frame ITRF2014 --details
+cargo test --offline --features nav,log --test nav_qzss_frame -- --nocapture
+cargo run --offline --features nav --example nav_frame -- tests/fixtures/nav_qzss_j02_2023071.rnx J02 '2023-03-12T00:00:00 QZSST'
 ```
 
 The CLI should show `QzssJgsItrf2014Aligned`, `Itrf2014`,
-`UnboundedApproximate`, the zero-offset edge ID, `velocity_km_s=unavailable`,
+`UnboundedApproximate`, the zero-offset edge ID, `velocity_km_s=None`,
 and `CAUTION`. For VS Code, use Rust Analyzer's **Debug Test** on
 `real_j02_reaches_marked_itrf2014_approximation_at_its_own_epoch` in
 `tests/nav_qzss_frame.rs`. Break at `NavCandidate::spatial_state_at` where

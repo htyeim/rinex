@@ -75,12 +75,12 @@ From the rinex repository root:
 ```sh
 python3 tests/reference/nav_galileo_frame.py > /private/tmp/nav_galileo_frame_expected_n09d.json
 diff -u tests/reference/nav_galileo_frame_expected.json /private/tmp/nav_galileo_frame_expected_n09d.json
-cargo test --offline --locked --features nav,log --test nav_galileo_frame -- --nocapture
-cargo run --offline --locked --features nav --example nav_probe -- state tests/fixtures/nav_galileo_e08_inav_2024128.rnx E08 '2024-05-07T00:30:00 GST' --target-frame ITRF2014 --details
+cargo test --offline --features nav,log --test nav_galileo_frame -- --nocapture
+cargo run --offline --features nav --example nav_frame -- tests/fixtures/nav_galileo_e08_inav_2024128.rnx E08 '2024-05-07T00:30:00 GST'
 ```
 
 The CLI should show `GalileoGtrf23v01`, `Itrf2014`, both ordered edge IDs,
-`UnboundedApproximate`, `CAUTION`, and `velocity_km_s=unavailable`. In VS
+`UnboundedApproximate`, `CAUTION`, and `velocity_km_s=None`. In VS
 Code, use Rust Analyzer **Debug Test** on
 `real_e08_inav_reaches_marked_itrf2014_at_its_own_epoch` in
 `tests/nav_galileo_frame.rs`. Break in `NavCandidate::spatial_state_at` at

@@ -70,9 +70,7 @@ impl NavCandidate<'_> {
         if (t - toe).abs() >= half {
             return Err(KeplerStateError::OutOfValidity);
         }
-        if matches!(self.key.sv.constellation, QZSS | IRNSS)
-            && (t - self.clock_reference).abs() >= half
-        {
+        if (t - self.clock_reference).abs() >= half {
             return Err(KeplerStateError::OutOfValidity);
         }
         let helper = self.ephemeris.helper_checked_for_geo(

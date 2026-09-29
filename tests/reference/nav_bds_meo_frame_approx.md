@@ -58,8 +58,8 @@ From the rinex repository root:
 ```sh
 python3 tests/reference/nav_bds_meo_frame.py > /private/tmp/nav_bds_meo_frame_expected_check.json
 diff -u tests/reference/nav_bds_meo_frame_expected.json /private/tmp/nav_bds_meo_frame_expected_check.json
-cargo test --offline --locked --features nav,log --test nav_bds_meo_frame -- --nocapture
-cargo run --offline --locked --features nav --example nav_probe -- state tests/fixtures/nav_legacy_kms_2022159.rnx C20 '2022-06-08T09:00:00 BDT' --target-frame ITRF2014 --details
+cargo test --offline --features nav,log --test nav_bds_meo_frame -- --nocapture
+cargo run --offline --features nav --example nav_frame -- tests/fixtures/nav_legacy_kms_2022159.rnx C20 '2022-06-08T09:00:00 BDT'
 ```
 
 The CLI should report `msgtype: D1`, `Bdcs2019v01`, `Itrf2014`, one

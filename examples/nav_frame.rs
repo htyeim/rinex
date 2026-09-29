@@ -3,7 +3,7 @@
 use rinex::{
     navigation::rinex::{
         selection::UnknownHealthPolicy,
-        spatial_state::{FrameId, FrameRequest},
+        spatial_state::{FrameId, FrameRequest, FrameTransformer, SpatialPoint, TransformOptions},
     },
     prelude::{Epoch, Rinex, SV},
 };
@@ -11,9 +11,16 @@ use std::{error::Error, str::FromStr};
 
 fn main() -> Result<(), Box<dyn Error>> {
     let mut args = std::env::args().skip(1);
-    let file = args.next().ok_or("usage: nav_frame FILE SV EPOCH")?;
+    let file = args
+        .next()
+        .ok_or("usage: nav_frame FILE SV EPOCH [--warnings-as-errors]")?;
     let sv = SV::from_str(&args.next().ok_or("missing SV")?)?;
     let epoch = Epoch::from_str(&args.next().ok_or("missing epoch")?)?;
+    let strict = match args.next().as_deref() {
+        None => false,
+        Some("--warnings-as-errors") => true,
+        _ => return Err("usage: nav_frame FILE SV EPOCH [--warnings-as-errors]".into()),
+    };
     if args.next().is_some() {
         return Err("unexpected argument".into());
     }
@@ -26,18 +33,27 @@ fn main() -> Result<(), Box<dyn Error>> {
     let candidate = report
         .chosen()
         .ok_or("no propagatable supported NAV record")?;
+    println!(
+        "selected={} msgtype: {:?}",
+        candidate.key.sv, candidate.key.msgtype
+    );
     let native = candidate.spatial_state_at(epoch)?;
-    let result = native
-        .state
-        .to_frame(FrameRequest::Realization(FrameId::Itrf2014))?;
+    let result = FrameTransformer.to_frame(
+        &SpatialPoint::from_nav(&native.state)?,
+        FrameRequest::Realization(FrameId::Itrf2014),
+        TransformOptions {
+            warnings_as_errors: strict,
+            ..Default::default()
+        },
+    )?;
     println!(
         "native_frame={:?} native_km={:?}",
         native.state.native_frame(),
         native.state.position_km
     );
     println!(
-        "target={:?} epoch={} position_km={:?}",
-        result.target_realization, result.epoch, result.position_km
+        "target={:?} source_realization={:?} epoch={} position_km={:?}",
+        result.target_realization, result.source_realization, result.epoch, result.position_km
     );
     println!(
         "source_basis={:?} source_evidence={:?} position_status={:?} method={:?} edges={:?} velocity_km_s={:?}",

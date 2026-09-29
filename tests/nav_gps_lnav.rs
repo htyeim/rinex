@@ -24,6 +24,33 @@ fn sample() -> (Rinex, SV) {
 }
 
 #[test]
+fn stale_toc_rejects_gps_selection_and_direct_state() {
+    let (mut nav, sv) = sample();
+    let (key, frame) = nav.record.as_mut_nav().unwrap().pop_first().unwrap();
+    let toe = frame.as_ephemeris().unwrap().toe(sv).unwrap();
+    let mut stale_clock = key;
+    stale_clock.epoch = toe + Duration::from_seconds(7200.0);
+    nav.record.as_mut_nav().unwrap().insert(stale_clock, frame);
+    let report = nav.nav_select_gps_lnav(sv, toe, UnknownHealthPolicy::Reject);
+    assert!(report.chosen().is_none());
+    assert_eq!(
+        report.candidates[0].rejection,
+        Some(NavRejection::OutOfValidity)
+    );
+
+    let (nav, sv) = sample();
+    let (key, eph) = nav.nav_ephemeris_frames_iter().next().unwrap();
+    let toe = eph.toe(sv).unwrap();
+    let report = nav.nav_select_gps_lnav(sv, toe, UnknownHealthPolicy::Reject);
+    let mut candidate = *report.chosen().unwrap();
+    candidate.clock_reference = key.epoch - Duration::from_seconds(7200.0);
+    assert!(matches!(
+        candidate.native_state_at(toe),
+        Err(StateError::OutOfValidity)
+    ));
+}
+
+#[test]
 fn real_g02_lnav_native_position_velocity_and_clock() {
     let (nav, sv) = sample();
     let (key, eph) = nav.nav_ephemeris_frames_iter().next().unwrap();
