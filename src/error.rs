@@ -320,6 +320,9 @@ pub enum FormattingError {
     #[error("missing navigation standard specs")]
     MissingNavigationStandards,
 
+    #[error("nav: missing required field {0}")]
+    MissingNavigationField(&'static str),
+
     #[error("undefined observables")]
     UndefinedObservables,
 

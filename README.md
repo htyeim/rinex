@@ -71,6 +71,23 @@ Use `parse_strict`, `from_file_strict`, or `from_gzip_file_strict` to return an 
 
 Real V2/V3 legacy LNAV and V4 FDMA selection are exercised in `tests/nav_glonass_fdma.rs`. The V4 R01 reference states come from the independent script `tests/reference/glonass_fdma_r01.py`; source, equations, and numerical limits are recorded in `tests/reference/GLONASS_FDMA.md`. Run `cargo test --features nav --test nav_glonass_fdma` from the repository root. The numerical comparison verifies this implementation against the recorded integration algorithm, not precise orbit accuracy.
 
+## Additional native NAV states (`nav` feature)
+
+`nav_select_ephemeris(sv, t, UnknownHealthPolicy::Reject)` ranks decoded records only after checking message support, orbit and clock windows, health, required fields, and whether the selected propagator can produce a finite state at `t`. The result reports every candidate and its rejection reason. Call `kepler_state_at(t)` for the Kepler families below, `sbas_state_at(t)` for SBAS, or `fdma_state_at(t)` for GLONASS. The states return native broadcast terrestrial axes, position in km, rotating-axis velocity in km/s, and satellite clock correction in seconds without signal group delay. They do not perform a terrestrial-frame conversion.
+
+| NAV record | Native frame and state | Reference test |
+| --- | --- | --- |
+| GPS LNAV, RINEX 2/3/4 | WGS-84 broadcast axes, Kepler | `nav_gps_lnav`, `nav_legacy` |
+| GLONASS LNAV (2/3), FDMA (4) | PZ-90 broadcast axes, RK4 | `nav_glonass_fdma` |
+| SBAS LNAV (2/3), SBAS (4) | SBAS broadcast axes, position/velocity polynomial | `nav_sbas` (real V4) |
+| QZSS LNAV (3/4) | JGS broadcast axes, Kepler | `nav_qzss_lnav` (real V4) |
+| NavIC LNAV (3/4) | WGS-84 broadcast axes, Kepler; realization unknown | `nav_navic_lnav` (real V4) |
+| Galileo INAV/FNAV (4) | GTRF broadcast axes, Kepler | `nav_legacy` |
+| BeiDou D1 non-GEO, D2 GEO (4) | CGCS2000 broadcast axes, Kepler; GEO rotation for D2 | `nav_legacy`, `nav_bds_geo` |
+| BeiDou V2/V3 LNAV, D1 GEO, D2 non-GEO, other messages | `UnsupportedMessage` | `nav_broadcast_selection`, `nav_bds_geo` |
+
+The selectors use exclusive half-windows documented in the matching `tests/reference/NAV_*.md` files. Those notes identify the real record, independent calculation, units, and limits. The window and numerical comparisons check the declared algorithm; they do not establish physical orbit accuracy or a particular frame realization. RINEX 4 Galileo INAV/FNAV parsing follows the spare slot after the week field, and SBAS writing uses its `t_tm` transmission-time field.
+
 The old ANISE `Orbit` return paths (`kepler2position`, `sv_orbit`, `nav_azimuth_elevation_range`) have been removed because they labeled untransformed broadcast coordinates as ANISE IAU Earth. `kepler2position_velocity` remains a raw low-level calculation without message selection or a frame realization. `nav_ephemeris_selection` likewise remains a raw ephemeris lookup. Downstream callers using the removed methods must migrate to the native state or supply a verified frame conversion before using ANISE geometry; this public API change needs upstream review.
 
 The G02 V4 test fixture is an unchanged excerpt of `data/NAV/V4/KMS300DNK_R_20221591000_01H_MN.rnx.gz` at data submodule commit `209bfbd7016bd654f256238768a9e030ec5ab299` (MPL-2.0); the original compressed SHA-256 is `2bae4217cb71ad4a2b9c0067bd1c5b56915e42d2007a94e91eb408468cc4763f`. `tests/reference/nav_gps_lnav.py` independently reads the fixed RINEX slots and evaluates the broadcast equations, adapted from RTKLIB `eph2pos` at commit `180043ee24b6d2b168f98b64be15f69d50046b1a`. From the repository root, run `python3 tests/reference/nav_gps_lnav.py` to inspect its JSON on stdout, then `cargo test --features nav --test nav_gps_lnav`. The position, velocity, and clock tolerances in the test assess this algorithm against the independent calculation; they do not establish precise-orbit accuracy.

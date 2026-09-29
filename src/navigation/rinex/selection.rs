@@ -11,6 +11,11 @@ pub enum NativeFrame {
     GpsBroadcastWgs84,
     /// GLONASS broadcast PZ-90 axes; the record does not identify a realization.
     GlonassBroadcastPz90,
+    SbasBroadcast,
+    QzssBroadcastJgs,
+    NavicBroadcastWgs84,
+    GalileoBroadcastGtrf,
+    BeiDouBroadcastCgcs2000,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -55,6 +60,9 @@ pub struct NavCandidate<'a> {
     pub key: &'a NavKey,
     pub ephemeris: &'a Ephemeris,
     pub orbit_reference: Option<Epoch>,
+    pub clock_reference: Epoch,
+    pub validity_half_window: Option<Duration>,
+    pub native_frame: Option<NativeFrame>,
     pub rejection: Option<NavRejection>,
 }
 
@@ -176,6 +184,9 @@ impl Rinex {
                 key,
                 ephemeris: eph,
                 orbit_reference: toe,
+                clock_reference: key.epoch,
+                validity_half_window: supported.then_some(Duration::from_seconds(7200.0)),
+                native_frame: supported.then_some(NativeFrame::GpsBroadcastWgs84),
                 rejection,
             };
             if rejection.is_none() && candidate.native_state_at(t).is_err() {
@@ -220,7 +231,11 @@ impl Rinex {
             .filter(|(key, _)| key.sv == sv)
         {
             let supported = key.sv.constellation == Constellation::Glonass
-                && matches!(key.msgtype, NavMessageType::FDMA | NavMessageType::LNAV)
+                && (if self.header.version.major >= 4 {
+                    key.msgtype == NavMessageType::FDMA
+                } else {
+                    key.msgtype == NavMessageType::LNAV
+                })
                 && key.subtype.is_none();
             let health = eph
                 .orbits
@@ -247,6 +262,9 @@ impl Rinex {
                 key,
                 ephemeris: eph,
                 orbit_reference: supported.then_some(key.epoch),
+                clock_reference: key.epoch,
+                validity_half_window: supported.then_some(Duration::from_seconds(900.0)),
+                native_frame: supported.then_some(NativeFrame::GlonassBroadcastPz90),
                 rejection,
             };
             if rejection.is_none() && candidate.fdma_state_at(t).is_err() {

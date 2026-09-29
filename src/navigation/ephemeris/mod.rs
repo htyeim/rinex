@@ -284,12 +284,19 @@ impl Ephemeris {
     pub fn toe(&self, sv: SV) -> Option<Epoch> {
         // TODO: in CNAV V4 TOC is said to be TOE... ...
         let (week, seconds) = (self.get_week()?, self.get_orbit_f64("toe")?);
+        if !seconds.is_finite() || !(0.0..604800.0).contains(&seconds) {
+            return None;
+        }
         let nanos = (seconds * 1.0E9).round() as u64;
 
         match sv.constellation {
-            Constellation::GPS | Constellation::QZSS | Constellation::Galileo => {
+            Constellation::GPS | Constellation::Galileo => {
                 Some(Epoch::from_time_of_week(week, nanos, TimeScale::GPST))
             },
+            // QZSST uses the GPS week origin and TAI offset.
+            Constellation::QZSS => Some(Epoch::from_time_of_week(week, nanos, TimeScale::QZSST)),
+            // Hifitime has no IRNSST scale; RINEX gives a GPS-aligned week.
+            Constellation::IRNSS => Some(Epoch::from_time_of_week(week, nanos, TimeScale::GPST)),
             Constellation::BeiDou => Some(Epoch::from_time_of_week(week, nanos, TimeScale::BDT)),
             _ => {
                 #[cfg(feature = "log")]

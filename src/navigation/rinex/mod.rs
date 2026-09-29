@@ -10,6 +10,17 @@ pub mod selection;
 #[cfg_attr(docsrs, doc(cfg(feature = "nav")))]
 pub mod glonass_fdma;
 
+#[cfg(feature = "nav")]
+#[cfg_attr(docsrs, doc(cfg(feature = "nav")))]
+pub mod sbas;
+
+#[cfg(feature = "nav")]
+#[cfg_attr(docsrs, doc(cfg(feature = "nav")))]
+pub mod legacy_kepler;
+
+#[cfg(feature = "nav")]
+mod broadcast_selection;
+
 #[cfg(all(feature = "nav", feature = "processing"))]
 #[cfg_attr(docsrs, doc(cfg(all(feature = "nav", feature = "processing"))))]
 pub mod time; // feature dependent high level methods

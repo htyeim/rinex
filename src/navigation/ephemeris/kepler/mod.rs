@@ -5,7 +5,7 @@ use crate::navigation::Ephemeris;
 use anise::math::Vector3;
 
 mod helper;
-pub use helper::Helper;
+pub use helper::{Helper, KeplerSolveError};
 
 #[cfg(doc)]
 use crate::bibliography::Bibliography;
@@ -138,7 +138,7 @@ impl Ephemeris {
             return None;
         }
 
-        let sv_ts = sv.timescale()?;
+        let sv_ts = crate::navigation::timescale(sv.constellation).ok()?;
         let toe = self.toe(sv)?;
         let dt = t.to_time_scale(sv_ts) - toe;
         Some(dt.to_seconds())
