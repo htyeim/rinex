@@ -129,8 +129,8 @@ use crate::prelude::{Constellation, Duration, Epoch, TimeScale, SV};
 ///     // that can resolve the coordinates of the SV using this very frame.
 ///     // You still have to manage your ephemeris frames correctly.
 ///     // This is just an example.
-///     if let Some(orbital_state) = ephemeris.kepler2position(sv_broadcaster, toc) {
-///         // continue with [Orbit] processing
+///     if let Some((position_km, velocity_km_s)) = ephemeris.kepler2position_velocity(sv_broadcaster, toc) {
+///         // Raw broadcast axes; use nav_select_gps_lnav for a labeled GPS state.
 ///     }
 /// }
 /// ```

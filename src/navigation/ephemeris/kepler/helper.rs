@@ -1,5 +1,5 @@
 #[cfg(feature = "log")]
-use log::{error, warn};
+use log::warn;
 
 use crate::{
     constants::{Constants, Omega},
@@ -109,7 +109,7 @@ impl Helper {
             fd_r[(1, 0)] = sin_omega_k;
             fd_r[(1, 1)] = cos_omega_k * cos_i_k;
             fd_r[(1, 2)] = x * cos_omega_k - y * sin_omega_k * cos_i_k;
-            fd_r[(1, 3)] = y * cos_omega_k * sin_i_k;
+            fd_r[(1, 3)] = -y * cos_omega_k * sin_i_k;
             fd_r[(2, 1)] = sin_i_k;
             fd_r[(2, 3)] = y * cos_i_k;
 
@@ -267,12 +267,10 @@ impl Ephemeris {
                 break;
             }
             i += 1;
+            if i >= Constants::MAX_KEPLER_ITER {
+                return None;
+            }
             e_k_lst = e_k;
-        }
-
-        if i >= Constants::MAX_KEPLER_ITER {
-            #[cfg(feature = "log")]
-            error!("{} kepler iteration overflow", sv);
         }
 
         // true anomaly
@@ -297,9 +295,7 @@ impl Ephemeris {
         let fd_omega_k = perturbations.omega_dot - omega;
 
         let fd_e_k = n / (1.0 - kepler.e * e_k.cos());
-        let fd_phi_k = ((1.0 + kepler.e) / (1.0 - kepler.e)).sqrt()
-            * ((v_k / 2.0).cos() / (e_k / 2.0).cos()).powi(2)
-            * fd_e_k;
+        let fd_phi_k = (1.0 - kepler.e.powi(2)).sqrt() / (1.0 - kepler.e * cos_e_k) * fd_e_k;
 
         let fd_u_k =
             (perturbations.cus * x2_cos_phi_k - perturbations.cuc * x2_sin_phi_k) * fd_phi_k * 2.0

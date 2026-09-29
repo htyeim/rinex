@@ -2,6 +2,10 @@
 #[cfg_attr(docsrs, doc(cfg(feature = "nav")))]
 pub mod feature; // feature dependent, high level methods
 
+#[cfg(feature = "nav")]
+#[cfg_attr(docsrs, doc(cfg(feature = "nav")))]
+pub mod selection;
+
 #[cfg(all(feature = "nav", feature = "processing"))]
 #[cfg_attr(docsrs, doc(cfg(all(feature = "nav", feature = "processing"))))]
 pub mod time; // feature dependent high level methods
