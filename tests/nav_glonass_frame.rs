@@ -253,17 +253,13 @@ fn nav_record_orbit_reference_and_evaluation_must_be_in_pz9011_window() {
             .unwrap();
         assert_eq!(state.state.realization(), FrameRealization::Unknown);
         assert_eq!(state.state.source_evidence(), None);
-        let result = state
-            .state
-            .to_frame(FrameRequest::Realization(FrameId::Itrf2014))
-            .unwrap();
         assert_eq!(
-            result.position_status(),
-            rinex::navigation::rinex::spatial_state::PositionStatus::NominalAssumption
+            state
+                .state
+                .to_frame(FrameRequest::Realization(FrameId::Itrf2014))
+                .unwrap_err(),
+            FrameError::UnknownSourceRealization
         );
-        assert_eq!(
-            result.fallback_reason,
-            Some(FrameError::UnknownSourceRealization)
-        );
+        assert!(state.state.position_km.iter().all(|v| v.is_finite()));
     }
 }

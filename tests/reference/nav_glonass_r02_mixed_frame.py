@@ -4,7 +4,7 @@ Reads fixed-width RINEX fields, implements the GLONASS J2 RK4 model in Python,
 then applies published frame parameters. Does not call the Rust library.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 import json
 from math import pi
@@ -13,22 +13,28 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "tests/fixtures/nav_mixed_2024131_first_epoch.rnx"
-FIXTURE_SHA256 = "324cbfaab4bc404490d8af375fa20b7324f04cfcae4a3b91aca6a68add8040d6"
+FIXTURE_SHA256 = "dce340cf859c06b7785596f379f1bbf39f8042042629309adc9fbdc2f322c69e"
 RECORD_PREFIX = "R02 2024 05 10 02 45 00"
-QUERY_UTC = datetime(2024, 5, 10, 2, 59, 42, tzinfo=timezone.utc)
+QUERY_GPST_LABEL = datetime(2024, 5, 10, 3, 0, 0, tzinfo=timezone.utc)
 
 
 def main() -> None:
     raw = FIXTURE.read_bytes()
     assert sha256(raw).hexdigest() == FIXTURE_SHA256
     lines = raw.decode("ascii").splitlines()
+    header = lines[:next(i for i, line in enumerate(lines) if "END OF HEADER" in line) + 1]
+    leap_lines = [line for line in header if "LEAP SECONDS" in line]
+    assert len(leap_lines) == 1
+    gpst_minus_utc = int(leap_lines[0][:6])
+    assert gpst_minus_utc == 18
+    query_utc = QUERY_GPST_LABEL - timedelta(seconds=gpst_minus_utc)
     matches = [i for i, line in enumerate(lines) if line.startswith(RECORD_PREFIX)]
     assert len(matches) == 1
     row = matches[0]
     assert lines[row - 1].startswith("> EPH R02 FDMA")
     record = lines[row:row + 5]
     toc = datetime(*map(int, record[0][:23].split()[1:]), tzinfo=timezone.utc)
-    dt_s = (QUERY_UTC - toc).total_seconds()
+    dt_s = (query_utc - toc).total_seconds()
     assert dt_s == 882.0
     rows = [
         [float(record[i][4 + 19 * j:23 + 19 * j].replace("D", "E")) for j in range(4)]
@@ -73,7 +79,7 @@ def main() -> None:
     ]
 
     # IERS ITRF2020 Table 2 gives ITRF2014 minus ITRF2020 at 2015.0.
-    years = (QUERY_UTC - datetime(2015, 1, 1, tzinfo=timezone.utc)).total_seconds() / 31557600.0
+    years = (query_utc - datetime(2015, 1, 1, tzinfo=timezone.utc)).total_seconds() / 31557600.0
     translation_mm = (-1.4, -0.9 - 0.1*years, 1.4 + 0.2*years)
     scale = 1.0 - 0.42e-9
     itrf2020_km = [(itrf2014_km[i] - translation_mm[i]*1e-6)/scale for i in range(3)]
@@ -85,7 +91,7 @@ def main() -> None:
         "sv": "R02",
         "record_epoch_utc": toc.isoformat().replace("+00:00", "Z"),
         "query_epoch_gpst": "2024-05-10T03:00:00 GPST",
-        "query_epoch_utc": QUERY_UTC.isoformat().replace("+00:00", "Z"),
+        "query_epoch_utc": query_utc.isoformat().replace("+00:00", "Z"),
         "propagation_seconds": dt_s,
         "native_position_km": native_km,
         "native_velocity_km_s": state[3:],

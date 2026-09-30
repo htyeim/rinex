@@ -86,25 +86,31 @@ fn main() -> Result<(), Box<dyn Error>> {
         native.state.position_km
     );
     std::io::stdout().flush()?;
-    let result = FrameTransformer
-        .to_frame(
-            &SpatialPoint::from_nav(&native.state)?,
-            target,
-            TransformOptions {
-                warnings_as_errors: strict,
-                ..Default::default()
-            },
-        )
-        .map_err(|err| {
-            eprintln!("frame_error={err:?}");
-            err
-        })?;
+    let point = SpatialPoint::from_nav(&native.state)?;
+    let result = match FrameTransformer.to_frame(
+        &point,
+        target,
+        TransformOptions {
+            warnings_as_errors: strict,
+            ..Default::default()
+        },
+    ) {
+        Ok(result) => result,
+        Err(reason) => {
+            eprintln!(
+                "frame_error={reason:?} source={:?} native_km={:?}",
+                native.state.source(),
+                native.state.position_km
+            );
+            return Err(reason.into());
+        },
+    };
     println!(
         "target={:?} source_realization={:?} epoch={} position_km={:?}",
         result.target_realization, result.source_realization, result.epoch, result.position_km
     );
     println!(
-        "source_basis={:?} source_evidence={:?} position_status={:?} method={:?} catalog={} edges={:?} edge_info={:?} fallback_reason={:?} velocity_km_s={:?}",
+        "source_basis={:?} source_evidence={:?} position_status={:?} method={:?} catalog={} edges={:?} edge_info={:?} velocity_km_s={:?}",
         result.source_basis,
         result.source_evidence,
         result.position_status(),
@@ -112,17 +118,10 @@ fn main() -> Result<(), Box<dyn Error>> {
         result.catalog_version,
         result.edge_ids,
         result.edge_info,
-        result.fallback_reason,
         result.velocity_km_s
     );
     for note in result.cautions() {
         println!("{note}");
-    }
-    if let Some(assumption) = result.assumption {
-        println!(
-            "assumption_id={} scope={} operation={}",
-            assumption.id, assumption.scope, assumption.operation
-        );
     }
     Ok(())
 }

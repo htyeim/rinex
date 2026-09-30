@@ -72,7 +72,6 @@ fn inverse_of_published_r01_reference_recovers_independent_native_xyz() {
         result.target_realization,
         FrameRealization::Known(FrameId::Pz90_11)
     );
-    assert!(result.fallback_reason.is_none());
     assert!(result.velocity_km_s.is_none());
     assert!(result
         .cautions()
@@ -183,7 +182,6 @@ fn selected_e03_reaches_pz9011_through_ordered_approximate_edges() {
         .position_km
         .iter()
         .all(|coordinate| coordinate.is_finite()));
-    assert!(result.fallback_reason.is_none());
     let cautions = result.cautions();
     assert!(cautions.iter().any(|s| s.contains("GTRF23v01-ITRF2020")));
     assert!(cautions

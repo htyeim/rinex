@@ -36,9 +36,8 @@ unaltered nine-line header plus the single F/NAV record beginning at line
 75052 of DLR's public
 [`BRD400DLR_S_20241280000_01D_MN.rnx.gz`](https://igs.bkg.bund.de/root_ftp/IGS/BRDC/2024/128/BRD400DLR_S_20241280000_01D_MN.rnx.gz).
 The [IGS product description](https://igs.org/mgex/mgex-product-descriptions/)
-identifies the DLR RINEX 4 product; the [IGS open-data statement](https://igs.org/why-join-the-igs)
-supports redistribution of this small excerpt. The source header includes
-its DOI. Compressed source SHA-256:
+identifies the DLR RINEX 4 product; [IGS MGEX](https://www.igs.org/mgex/)
+states that its data and products are freely available for public use and requests citation for publications. The source header includes its DOI. Compressed source SHA-256:
 `ec027e4a167d3d08c17acfc3001fdf0cbbc723a8416fb5684b1d95b66291926f`;
 fixture SHA-256:
 `d0570dcc33768d805d57b7a8bf4b928be81164b3188d84dcd4e4b762491a81f5`.

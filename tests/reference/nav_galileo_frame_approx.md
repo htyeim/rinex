@@ -22,7 +22,7 @@ day-stamped ESA statement, that GTRF23v01 remained applicable for this
 2024-06-01 00:00:00 UTC (exclusive end). This is a deliberately narrow
 library policy, not the official full validity interval. NAV record, orbit
 reference, and evaluation instants must all be inside it. The older
-2022-06-08 E08 remains physically unresolved; the current API returns only a marked nominal diagnostic after NAV checks. FNAV has a separate regression fixture.
+2022-06-08 E08 remains physically unresolved; the current API returns `UnknownSourceRealization` after native propagation. FNAV has a separate regression fixture.
 
 ESA gives a GTRF-to-ITRF alignment requirement of 3 cm (2σ) for reference
 stations. It publishes no seven-parameter GTRF23v01 → ITRF2020 correction
@@ -46,7 +46,7 @@ record at source file line 74090, copied byte-for-byte from DLR's public
 [IGS/BKG daily archive](https://igs.bkg.bund.de/root_ftp/IGS/BRDC/2024/128/BRD400DLR_S_20241280000_01D_MN.rnx.gz).
 The [IGS product description](https://igs.org/mgex/mgex-product-descriptions/)
 identifies BRD400DLR as DLR's RINEX 4 merged broadcast data product and gives
-its dataset DOI; [IGS states its data/products are available for unrestricted use](https://igs.org/why-join-the-igs).
+its dataset DOI; [IGS MGEX states its data and products are freely available for public use and requests citation for publications](https://www.igs.org/mgex/).
 The source header itself carries that DOI. Compressed source
 SHA-256: `ec027e4a167d3d08c17acfc3001fdf0cbbc723a8416fb5684b1d95b66291926f`;
 fixture SHA-256:

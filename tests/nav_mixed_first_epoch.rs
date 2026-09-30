@@ -1,4 +1,4 @@
-//! Real DLR mixed NAV and Septentrio first-epoch slice, extracted byte-for-byte.
+//! Reduced public DLR NAV sample: selection, native state, and frame evidence.
 #![cfg(feature = "nav")]
 use rinex::{
     navigation::rinex::{
@@ -10,32 +10,14 @@ use rinex::{
     },
     prelude::{Epoch, Rinex, SV},
 };
-use std::{collections::BTreeSet, str::FromStr};
+use std::str::FromStr;
 
 const NAV: &str = "tests/fixtures/nav_mixed_2024131_first_epoch.rnx";
-const OBS: &str = "tests/fixtures/obs_mixed_2024131_first_epoch.rnx";
-
-#[test]
-fn actual_first_epoch_has_expected_time_and_56_distinct_svs() {
-    let obs = Rinex::from_file(OBS).unwrap();
-    let mut epochs = obs.observations_iter();
-    let (key, values) = epochs.next().unwrap();
-    assert_eq!(
-        key.epoch,
-        Epoch::from_str("2024-05-10T03:00:00 GPST").unwrap()
-    );
-    assert!(epochs.next().is_none());
-    let svs: BTreeSet<_> = values.signals.iter().map(|signal| signal.sv).collect();
-    assert_eq!(svs.len(), 56);
-    for sv in ["G04", "R02", "E03", "C02", "I03", "J04"] {
-        assert!(svs.contains(&SV::from_str(sv).unwrap()), "{sv}");
-    }
-}
 
 #[test]
 fn representative_real_records_keep_selection_propagation_and_frame_errors_distinct() {
     let nav = Rinex::from_file(NAV).unwrap();
-    assert_eq!(nav.nav_ephemeris_frames_iter().count(), 822);
+    assert_eq!(nav.nav_ephemeris_frames_iter().count(), 11);
     assert_eq!(nav.nav_parse_report().rejected_records(), 0);
     assert_eq!(nav.nav_parse_report().unsupported_records(), 0);
     let t = Epoch::from_str("2024-05-10T03:00:00 GPST").unwrap();
@@ -94,18 +76,8 @@ fn representative_real_records_keep_selection_propagation_and_frame_errors_disti
             );
             assert_eq!(result.edge_ids.len(), if sv.prn == 2 { 3 } else { 2 });
         } else if let Some(reason) = expected_reason {
-            let result = converted.unwrap();
-            assert_eq!(
-                result.position_status(),
-                PositionStatus::NominalAssumption,
-                "{sv}"
-            );
-            assert_eq!(result.fallback_reason, Some(reason), "{sv}");
-            assert_eq!(result.position_km, native.state.position_km);
-            assert!(result
-                .cautions()
-                .iter()
-                .any(|note| note.contains("CAUTION")));
+            assert_eq!(converted.unwrap_err(), reason, "{sv}");
+            assert!(native.state.position_km.iter().all(|x| x.is_finite()));
         } else {
             let result = converted.unwrap();
             assert_eq!(result.position_status(), PositionStatus::NativeIdentity);

@@ -210,17 +210,12 @@ fn older_e08_fnav_stays_unknown() {
     let native = selected.chosen().unwrap().spatial_state_at(epoch).unwrap();
     assert_eq!(native.key.msgtype, NavMessageType::FNAV);
     assert_eq!(native.state.realization(), FrameRealization::Unknown);
-    let result = native
-        .state
-        .to_frame(FrameRequest::Realization(FrameId::Itrf2014))
-        .unwrap();
     assert_eq!(
-        result.position_status(),
-        rinex::navigation::rinex::spatial_state::PositionStatus::NominalAssumption
+        native
+            .state
+            .to_frame(FrameRequest::Realization(FrameId::Itrf2014))
+            .unwrap_err(),
+        FrameError::UnknownSourceRealization
     );
-    assert_eq!(
-        result.fallback_reason,
-        Some(FrameError::UnknownSourceRealization)
-    );
-    assert_eq!(result.source_realization, FrameRealization::Unknown);
+    assert!(native.state.position_km.iter().all(|v| v.is_finite()));
 }

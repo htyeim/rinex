@@ -16,9 +16,6 @@ Cargo.lock
 **/*.rs.bk
 .DS_Store
 *.rnx
-!tests/fixtures/nav_gps_g15_g2296_2024128.rnx
-!tests/fixtures/nav_mixed_2024131_first_epoch.rnx
-!tests/fixtures/obs_mixed_2024131_first_epoch.rnx
 *.crx
 *.rs~
 

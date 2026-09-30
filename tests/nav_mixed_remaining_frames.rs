@@ -42,7 +42,7 @@ fn e03_reaches_g2296_with_independent_raw_orbit_reference() {
         FrameRealization::Known(FrameId::GalileoGtrf23v01)
     );
     // tests/reference/nav_galileo_e03_mixed_frame.py reads the selected raw block
-    // at original fixture line 870 and independently evaluates the orbit.
+    // at original source line 870 and independently evaluates the orbit.
     let expected = [13527.734303005513, 20608.988501740743, -16393.79374112982];
     assert_xyz(native.state.position_km, expected);
     let point = SpatialPoint::from_nav(&native.state).unwrap();
@@ -229,7 +229,7 @@ fn jgs2020_alignment_is_dated_approximation_and_j04_remains_unselected() {
 }
 
 #[test]
-fn unresolved_2024_sources_receive_general_nominal_diagnostic() {
+fn unresolved_2024_sources_return_original_error_and_keep_native_xyz() {
     let nav = Rinex::from_file(NAV).unwrap();
     for (label, error) in [
         ("C02", FrameError::UnknownSourceRealization),
@@ -237,28 +237,29 @@ fn unresolved_2024_sources_receive_general_nominal_diagnostic() {
             "I03",
             FrameError::UnsupportedSource(SourceFrameIdentity::NavicBroadcastWgs84),
         ),
-        (
-            "S27",
-            FrameError::UnsupportedSource(SourceFrameIdentity::SbasBroadcast),
-        ),
     ] {
         let selected = nav.nav_select_ephemeris(
             SV::from_str(label).unwrap(),
             epoch(),
             UnknownHealthPolicy::Reject,
         );
-        let chosen = selected.chosen().unwrap();
-        let native = chosen.spatial_state_at(epoch()).unwrap();
-        let point = SpatialPoint::from_nav(&native.state).unwrap();
-        let result = FrameTransformer
-            .to_frame(&point, FrameRequest::Wgs84, TransformOptions::default())
+        let native = selected
+            .chosen()
+            .unwrap()
+            .spatial_state_at(epoch())
             .unwrap();
+        assert!(native.state.position_km.iter().all(|v| v.is_finite()));
+        let point = SpatialPoint::from_nav(&native.state).unwrap();
         assert_eq!(
-            result.position_status(),
-            PositionStatus::NominalAssumption,
-            "{label}"
+            FrameTransformer
+                .to_frame(&point, FrameRequest::Wgs84, TransformOptions::default())
+                .unwrap_err(),
+            error
         );
-        assert_eq!(result.fallback_reason, Some(error), "{label}");
-        assert_eq!(result.position_km, native.state.position_km);
+        assert_eq!(
+            native.state.to_frame(FrameRequest::Wgs84).unwrap_err(),
+            error
+        );
+        assert_eq!(native.state.realization(), FrameRealization::Unknown);
     }
 }

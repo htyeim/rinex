@@ -12,7 +12,6 @@ use crate::{
     navigation::{NavKey, NavMessageType},
     prelude::{Constellation, Epoch},
 };
-use std::str::FromStr;
 
 /// The broadcasting system that defines the native terrestrial axes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -60,7 +59,6 @@ pub struct BroadcastFixedState {
     source: SourceFrameIdentity,
     realization: FrameRealization,
     source_evidence: Option<&'static str>,
-    nominal_sample: Option<NominalSample>,
     pub position_km: [f64; 3],
     pub velocity_km_s: [f64; 3],
 }
@@ -73,14 +71,6 @@ pub struct NavSpatialState {
     pub clock_reference: Epoch,
     pub record_epoch: Epoch,
     pub state: BroadcastFixedState,
-}
-
-/// Only these published reference records may use an unverified nominal frame label.
-/// This is a sample guard, not a general NavIC or SBAS frame relation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum NominalSample {
-    NavicI02,
-    GaganS27,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -220,7 +210,6 @@ impl NavCandidate<'_> {
         } else {
             (FrameRealization::Unknown, None)
         };
-        let nominal_sample = nominal_sample_for(self, source);
         Ok(NavSpatialState {
             key: *self.key,
             orbit_reference: self.orbit_reference,
@@ -232,7 +221,6 @@ impl NavCandidate<'_> {
                 source,
                 realization,
                 source_evidence,
-                nominal_sample,
                 position_km,
                 velocity_km_s,
             },
@@ -263,8 +251,6 @@ pub enum PositionStatus {
     NativeIdentity,
     NumericalTransform,
     MarkedApproximation,
-    /// The source-to-target physical relation is unverified; the coordinates are nominal.
-    NominalAssumption,
 }
 
 /// A target state. Unknown realization remains explicit rather than inventing Gxxxx.
@@ -273,8 +259,6 @@ pub struct FrameResult {
     pub epoch: Epoch,
     pub source: SourceFrameIdentity,
     pub target: SourceFrameIdentity,
-    /// The requested output label. For `NominalAssumption` this does not
-    /// establish that the native coordinates physically realize that frame.
     pub target_realization: FrameRealization,
     pub source_realization: FrameRealization,
     /// Always inspect `position_status()` before interpreting this target XYZ.
@@ -291,25 +275,9 @@ pub struct FrameResult {
     /// NAV broadcast realization evidence, separate from the conversion edge.
     /// None for caller-asserted points and unresolved NAV sources.
     pub source_evidence: Option<&'static str>,
-    /// Explicit, unverified alignment assumption. Never a known source realization.
-    pub assumption: Option<&'static FrameAssumptionInfo>,
-    /// Failure of the evidence-backed route before a nominal fallback.
-    pub fallback_reason: Option<FrameError>,
     /// A published operation accuracy is not a strict position upper bound.
     pub position_accuracy_note: Option<&'static str>,
     pub velocity_note: Option<&'static str>,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct FrameAssumptionInfo {
-    pub id: &'static str,
-    /// Supporting source, or empty when the diagnostic policy has no physical relation source.
-    pub source_url: &'static str,
-    /// Hash of a reference fixture, or empty. Never a hash of the caller's runtime file.
-    pub reference_fixture_sha256: &'static str,
-    pub scope: &'static str,
-    pub operation: &'static str,
-    pub time_note: &'static str,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -335,20 +303,11 @@ impl FrameResult {
         &self.edge_info
     }
 
-    /// Human-readable cautions, including the specific failed evidenced path.
+    /// Human-readable cautions for a returned evidenced path.
     pub fn cautions(&self) -> Vec<String> {
         let mut notes = Vec::new();
-        if let Some(reason) = self.fallback_reason {
-            notes.push(format!(
-                "CAUTION: evidenced frame route failed with {reason:?}; source={:?}, source_realization={:?}, target={:?}",
-                self.source, self.source_realization, self.target_realization
-            ));
-        }
         if self.source_basis == SourceBasis::CallerAsserted {
             notes.push("CAUTION: source identity and ECEF XYZ were asserted by the caller; if treated as a broadcast satellite state, NAV health, data validity, and propagation were not checked".into());
-        }
-        if self.assumption.is_some() && self.source == SourceFrameIdentity::NavicBroadcastWgs84 {
-            notes.push("CAUTION: NavIC IRNSST was represented with a GPST proxy; the physical time-scale difference was not verified".into());
         }
         if let Some(note) = self.position_accuracy_note {
             notes.push(note.into());
@@ -378,14 +337,10 @@ impl FrameResult {
     /// Inspect this before treating `position_km` as a coordinate in `target`.
     /// A concrete target ID alone does not establish a physical frame relation.
     pub fn position_status(&self) -> PositionStatus {
-        if self.assumption.is_some() {
-            PositionStatus::NominalAssumption
-        } else {
-            match self.method {
-                FrameMethod::Native => PositionStatus::NativeIdentity,
-                FrameMethod::Helmert | FrameMethod::Composite => PositionStatus::NumericalTransform,
-                FrameMethod::UnboundedApproximate => PositionStatus::MarkedApproximation,
-            }
+        match self.method {
+            FrameMethod::Native => PositionStatus::NativeIdentity,
+            FrameMethod::Helmert | FrameMethod::Composite => PositionStatus::NumericalTransform,
+            FrameMethod::UnboundedApproximate => PositionStatus::MarkedApproximation,
         }
     }
 }
@@ -412,9 +367,7 @@ pub struct TransformOptions {
     /// Strict upper bound for the frame operation alone, in metres.
     pub max_frame_operation_error_m: Option<f64>,
     pub require_velocity: bool,
-    /// Explicitly permit nominal fallback for caller-asserted ECEF points.
-    pub allow_unverified_nominal: bool,
-    /// Reject marked approximations and unverified nominal assumptions.
+    /// Reject marked approximations.
     /// Informational accuracy/velocity notes on numerical paths are retained.
     pub warnings_as_errors: bool,
 }
@@ -425,7 +378,6 @@ impl Default for TransformOptions {
             method: MethodPolicy::BestAvailable,
             max_frame_operation_error_m: None,
             require_velocity: false,
-            allow_unverified_nominal: false,
             warnings_as_errors: false,
         }
     }
@@ -442,7 +394,6 @@ pub struct SpatialPoint {
     source_basis: SourceBasis,
     realization: FrameRealization,
     source_evidence: Option<&'static str>,
-    nominal_sample: Option<NominalSample>,
     nav_snapshot: Option<NavPointSnapshot>,
 }
 
@@ -491,7 +442,6 @@ impl SpatialPoint {
                 _ => FrameRealization::Unknown,
             },
             source_evidence: None,
-            nominal_sample: None,
             nav_snapshot: None,
         })
     }
@@ -507,7 +457,6 @@ impl SpatialPoint {
         point.source_basis = SourceBasis::NavMessageAndCatalogDate;
         point.realization = state.realization;
         point.source_evidence = state.source_evidence;
-        point.nominal_sample = state.nominal_sample;
         point.nav_snapshot = Some(NavPointSnapshot {
             epoch: point.epoch,
             source: point.source,
@@ -583,103 +532,7 @@ impl BroadcastFixedState {
     }
 }
 
-fn navic_i02_reference_epoch() -> Epoch {
-    Epoch::from_str("2023-03-12T00:00:00 GPST").expect("fixed NavIC I02 reference epoch")
-}
-
-fn sbas_s27_reference_epoch() -> Epoch {
-    Epoch::from_str("2023-03-12T01:15:44 GPST").expect("fixed SBAS S27 reference epoch")
-}
-
-/// Keep fixture-specific eligibility in one place. Matching values restricts the
-/// library's explicit assumption; it does not authenticate a caller's NAV file.
-fn nominal_sample_for(
-    candidate: &NavCandidate<'_>,
-    source: SourceFrameIdentity,
-) -> Option<NominalSample> {
-    let key = candidate.key;
-    let eph = candidate.ephemeris;
-    if source == SourceFrameIdentity::NavicBroadcastWgs84
-        && key.sv.prn == 2
-        && key.msgtype == NavMessageType::LNAV
-        && key.epoch == navic_i02_reference_epoch()
-        && candidate.orbit_reference == Some(navic_i02_reference_epoch())
-        && candidate.clock_reference == navic_i02_reference_epoch()
-        && eph.get_orbit_f64("iodec") == Some(0.0)
-        && eph.clock_bias == 1.104795373976e-4
-        && eph.clock_drift == -2.819433575496e-11
-        && eph.clock_drift_rate == 0.0
-        && [
-            ("m0", 2.597586517985),
-            ("e", 1.982442918234e-3),
-            ("sqrta", 6.493359437943e3),
-            ("omega0", 1.593280097620),
-            ("week", 2253.0),
-            ("health", 0.0),
-        ]
-        .iter()
-        .all(|(field, expected)| eph.get_orbit_f64(field) == Some(*expected))
-    {
-        return Some(NominalSample::NavicI02);
-    }
-    if source == SourceFrameIdentity::SbasBroadcast
-        && key.sv.constellation == Constellation::GAGAN
-        && key.sv.prn == 27
-        && matches!(key.msgtype, NavMessageType::SBAS | NavMessageType::LNAV)
-        && key.epoch == sbas_s27_reference_epoch()
-        && candidate.orbit_reference == Some(sbas_s27_reference_epoch())
-        && candidate.clock_reference == sbas_s27_reference_epoch()
-        && eph.clock_bias == 1.117587089539e-8
-        && eph.clock_drift == 2.273736754432e-11
-        && eph.clock_drift_rate == 0.0
-        && [
-            ("satPosX", 24160.61976),
-            ("velX", -0.00267625),
-            ("accelX", -1.0e-7),
-            ("health", 0.0),
-            ("satPosY", 34538.67944),
-            ("velY", 0.00012625),
-            ("accelY", 2.0e-7),
-            ("accuracyCode", 4096.0),
-            ("satPosZ", 30.4972),
-            ("velZ", -0.001396),
-            ("accelZ", -1.875e-7),
-            ("iodn", 28.0),
-            ("t_tm", 4519.0),
-        ]
-        .iter()
-        .all(|(field, expected)| eph.get_orbit_f64(field) == Some(*expected))
-    {
-        return Some(NominalSample::GaganS27);
-    }
-    None
-}
-
 const CATALOG_VERSION: &str = "rinex-nav-frame-catalog-v3";
-const GENERAL_NOMINAL_ASSUMPTION: FrameAssumptionInfo = FrameAssumptionInfo {
-    id: "rinex:qualified-ECEF-to-requested-frame:nominal-zero-v1",
-    source_url: "",
-    reference_fixture_sha256: "",
-    scope: "finite selected and propagated NAV ECEF; caller-asserted ECEF only with explicit opt-in",
-    operation: "copy native ECEF XYZ directly; target is a diagnostic label, not a physical realization claim",
-    time_note: "coordinate epoch is preserved; source-specific time-scale assumptions remain separate",
-};
-const NAVIC_I02_ASSUMPTION: FrameAssumptionInfo = FrameAssumptionInfo {
-    id: "rinex:NavIC-I02:unknown-WGS84-to-nominal-ITRF2014:zero-v1",
-    source_url: "https://www.isro.gov.in/media_isro/pdf/Missions/irnss_sps_icd_version1.1-2017.pdf",
-    reference_fixture_sha256: "ae632c2debb026be9acaf207549a903bda9d89466c0ed1535c0e7cb2b2309ecd",
-    scope: "I02 LNAV record/ToE/ToC 2023-03-12T00:00:00 GPST proxy, IODEC 0, within existing 7200 s selection window; no runtime-file hash check",
-    operation: "copy native WGS84-family ECEF XYZ as nominal ITRF2014; source realization and frame offset unverified",
-    time_note: "IRNSST is represented by GPST proxy; physical time-scale difference is unverified",
-};
-const SBAS_S27_ASSUMPTION: FrameAssumptionInfo = FrameAssumptionInfo {
-    id: "rinex:GAGAN-S27:unknown-WGS84-to-nominal-ITRF2014:zero-v1",
-    source_url: "https://aim-india.aai.aero/eAIP_Archive/19-05-2022/eAIP/IN-ENR%204.3-en-GB.html",
-    reference_fixture_sha256: "93c7b062ebb651d17c02cc4cebb023b4717c6b56cec6b6a24a63fdc8b718fbee",
-    scope: "GAGAN S27/PRN127 SBAS EPH or identical LNAV-compatible record at 2023-03-12T01:15:44 GPST, matching broadcast fields, within |t-Toc| < 360 s; no runtime-file hash check",
-    operation: "copy native SBAS WGS84-family ECEF XYZ as nominal ITRF2014; source realization and frame offset unverified",
-    time_note: "RINEX SBAS record and propagation use GPST; no separate time-system offset applied",
-};
 const PZ9011_SOURCE_EVIDENCE: &str = "ICG17:2023:GNSS-TRFs:p9; ICG11:2016:PZ90.11-introduction:p12";
 const G2296_SOURCE_EVIDENCE: &str = "https://www.navcen.uscg.gov/gps-constellation (NANU 2024014)";
 const PZ9011_TO_ITRF2014: &str = "ICG:2018:PZ90.11-to-ITRF2014:static-2010-approx";
@@ -863,7 +716,8 @@ impl FrameTransformer {
         CATALOG_VERSION
     }
 
-    /// Convert a generic Earth-fixed point. The coordinate epoch is preserved.
+    /// Convert a generic Earth-fixed point when an evidenced route exists.
+    /// The coordinate epoch is preserved; unavailable routes return `FrameError`.
     /// G2296 is resolved only for 2024-03-04 through 2024-12-31, after the
     /// operational GPS update completed. The ITRF edge has its own window.
     /// Cross-frame velocity is withheld until
@@ -884,24 +738,15 @@ impl FrameTransformer {
         {
             return Err(FrameError::InconsistentFrame);
         }
-        let result = match self.to_frame_inner(point, request, options) {
-            Ok(result) => result,
-            Err(reason) if nominal_fallback_allowed(point, reason, options) => {
-                nominal_result(point, request, reason, options)?
-            },
-            Err(reason) => return Err(reason),
-        };
+        let result = self.to_frame_inner(point, request, options)?;
         if options.warnings_as_errors
-            && matches!(
-                result.position_status(),
-                PositionStatus::MarkedApproximation | PositionStatus::NominalAssumption
-            )
+            && result.position_status() == PositionStatus::MarkedApproximation
         {
             return Err(FrameError::WarningRejected(
                 result
                     .position_accuracy_note
                     .or(result.velocity_note)
-                    .unwrap_or("CAUTION: unverified frame assumption"),
+                    .unwrap_or("CAUTION: unbounded frame approximation"),
             ));
         }
         Ok(result)
@@ -925,102 +770,6 @@ impl FrameTransformer {
             if !limit.is_finite() || limit < 0.0 {
                 return Err(FrameError::InvalidPositionBound);
             }
-        }
-
-        if point.source == SourceFrameIdentity::NavicBroadcastWgs84
-            && request == FrameRequest::Realization(FrameId::Itrf2014)
-        {
-            if point.nominal_sample != Some(NominalSample::NavicI02)
-                || point.source_basis != SourceBasis::NavMessageAndCatalogDate
-                || point.realization != FrameRealization::Unknown
-            {
-                return Err(FrameError::UnsupportedSource(point.source));
-            }
-            if (point.epoch - navic_i02_reference_epoch())
-                .to_seconds()
-                .abs()
-                >= 7200.0
-            {
-                return Err(FrameError::OutsideCatalogWindow);
-            }
-            qualify_path(
-                PathEvidence {
-                    method: FrameMethod::UnboundedApproximate,
-                    domain: PathDomain::NavBroadcastSatellite,
-                },
-                point,
-                options,
-            )?;
-            if options.require_velocity {
-                return Err(FrameError::VelocityUnavailable);
-            }
-            return Ok(FrameResult {
-                epoch: point.epoch,
-                source: point.source,
-                target: SourceFrameIdentity::Realization(FrameId::Itrf2014),
-                source_realization: FrameRealization::Unknown,
-                target_realization: FrameRealization::Known(FrameId::Itrf2014),
-                position_km: point.position_km,
-                velocity_km_s: None,
-                method: FrameMethod::UnboundedApproximate,
-                catalog_version: CATALOG_VERSION,
-                edge_ids: NATIVE_EDGES.to_vec(),
-                edge_info: NATIVE_INFO.to_vec(),
-                source_basis: point.source_basis,
-                source_evidence: None,
-                assumption: Some(&NAVIC_I02_ASSUMPTION),
-                fallback_reason: None,
-                position_accuracy_note: Some("CAUTION: nominal ITRF2014 XYZ copies NavIC I02 native WGS84-family XYZ under an unverified zero-offset assumption; source realization and physical frame accuracy are unknown; no strict position-error bound"),
-                velocity_note: Some("cross-frame velocity is not validated; IRNSST uses a GPST proxy"),
-            });
-        }
-
-        if point.source == SourceFrameIdentity::SbasBroadcast
-            && request == FrameRequest::Realization(FrameId::Itrf2014)
-        {
-            if point.nominal_sample != Some(NominalSample::GaganS27)
-                || point.source_basis != SourceBasis::NavMessageAndCatalogDate
-                || point.realization != FrameRealization::Unknown
-            {
-                return Err(FrameError::UnsupportedSource(point.source));
-            }
-            if (point.epoch - sbas_s27_reference_epoch())
-                .to_seconds()
-                .abs()
-                >= 360.0
-            {
-                return Err(FrameError::OutsideCatalogWindow);
-            }
-            qualify_path(
-                PathEvidence {
-                    method: FrameMethod::UnboundedApproximate,
-                    domain: PathDomain::NavBroadcastSatellite,
-                },
-                point,
-                options,
-            )?;
-            if options.require_velocity {
-                return Err(FrameError::VelocityUnavailable);
-            }
-            return Ok(FrameResult {
-                epoch: point.epoch,
-                source: point.source,
-                target: SourceFrameIdentity::Realization(FrameId::Itrf2014),
-                source_realization: FrameRealization::Unknown,
-                target_realization: FrameRealization::Known(FrameId::Itrf2014),
-                position_km: point.position_km,
-                velocity_km_s: None,
-                method: FrameMethod::UnboundedApproximate,
-                catalog_version: CATALOG_VERSION,
-                edge_ids: NATIVE_EDGES.to_vec(),
-                edge_info: NATIVE_INFO.to_vec(),
-                source_basis: point.source_basis,
-                source_evidence: None,
-                assumption: Some(&SBAS_S27_ASSUMPTION),
-                fallback_reason: None,
-                position_accuracy_note: Some("CAUTION: nominal ITRF2014 XYZ copies GAGAN S27 native WGS84-family XYZ under an unverified zero-offset assumption; source realization and physical frame accuracy are unknown; no strict position-error bound"),
-                velocity_note: Some("cross-frame velocity is not validated"),
-            });
         }
 
         // Bare WGS84 requests against a GPS broadcast state are exact identity
@@ -1160,8 +909,6 @@ impl FrameTransformer {
             edge_info: path,
             source_basis: point.source_basis,
             source_evidence: point.source_evidence,
-            assumption: None,
-            fallback_reason: None,
             position_accuracy_note: Some(note),
             velocity_note: Some("cross-frame velocity is not validated"),
         })
@@ -1277,67 +1024,6 @@ fn apply_catalog_edge(id: &str, xyz: [f64; 3], epoch: Epoch) -> [f64; 3] {
     }
 }
 
-fn nominal_fallback_allowed(
-    point: &SpatialPoint,
-    reason: FrameError,
-    options: TransformOptions,
-) -> bool {
-    matches!(
-        reason,
-        FrameError::UnknownSourceRealization
-            | FrameError::UnsupportedSource(_)
-            | FrameError::OutsideCatalogWindow
-            | FrameError::NoPath
-            | FrameError::DomainNotApplicable
-    ) && (point.source_basis == SourceBasis::NavMessageAndCatalogDate
-        || options.allow_unverified_nominal)
-}
-
-fn nominal_result(
-    point: &SpatialPoint,
-    request: FrameRequest,
-    reason: FrameError,
-    options: TransformOptions,
-) -> Result<FrameResult, FrameError> {
-    qualify_path(
-        PathEvidence {
-            method: FrameMethod::UnboundedApproximate,
-            domain: PathDomain::AnyEarthFixed,
-        },
-        point,
-        options,
-    )?;
-    if options.require_velocity {
-        return Err(FrameError::VelocityUnavailable);
-    }
-    let (target, realization) = match request {
-        FrameRequest::Wgs84 => (
-            SourceFrameIdentity::GpsBroadcastWgs84,
-            if in_g2296_window(point.epoch) {
-                FrameRealization::Known(FrameId::Wgs84G2296)
-            } else {
-                FrameRealization::Unknown
-            },
-        ),
-        FrameRequest::Realization(id) => (
-            SourceFrameIdentity::Realization(id),
-            FrameRealization::Known(id),
-        ),
-    };
-    Ok(FrameResult {
-        epoch: point.epoch, source: point.source, target,
-        source_realization: point.realization, target_realization: realization,
-        position_km: point.position_km, velocity_km_s: None,
-        method: FrameMethod::UnboundedApproximate,
-        catalog_version: CATALOG_VERSION,
-        edge_ids: Vec::new(), edge_info: Vec::new(),
-        source_basis: point.source_basis, source_evidence: point.source_evidence,
-        assumption: Some(&GENERAL_NOMINAL_ASSUMPTION), fallback_reason: Some(reason),
-        position_accuracy_note: Some("CAUTION: diagnostic ECEF XYZ is copied with zero offset to the requested target label; the physical source-to-target relation and strict frame-operation error bound are unknown."),
-        velocity_note: Some("cross-frame velocity is not validated"),
-    })
-}
-
 #[allow(dead_code)] // A satellite-only edge is exercised with a synthetic candidate.
 #[derive(Clone, Copy)]
 enum PathDomain {
@@ -1399,8 +1085,6 @@ fn native_result(
         edge_info: NATIVE_INFO.to_vec(),
         source_basis: point.source_basis,
         source_evidence: point.source_evidence,
-        assumption: None,
-        fallback_reason: None,
         position_accuracy_note: None,
         velocity_note: None,
     })

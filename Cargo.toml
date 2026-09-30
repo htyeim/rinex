@@ -23,7 +23,7 @@ rustdoc-args = ["--cfg", "docrs", "--generate-link-to-definition"]
 
 [[example]]
 name = "nav_frame"
-required-features = ["nav"]
+required-features = ["nav", "flate2"]
 
 [features]
 # serde by default

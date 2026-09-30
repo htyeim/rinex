@@ -1,48 +1,17 @@
-> Historical mixed-NAV snapshot. For current diagnostic behavior and validation, see `nav_directed_frame_paths.md`.
+# DLR NAV microfixture at 2024-05-10 03:00:00 GPST
 
-# 2024-05-10 mixed NAV first-epoch diagnostic (F1)
+The 108-line [`nav_mixed_2024131_first_epoch.rnx`](../fixtures/nav_mixed_2024131_first_epoch.rnx) retains the original DLR RINEX 4 header and 11 byte-identical EPH blocks. The [NAV-only source manifest](../fixtures/nav_mixed_2024131_source.json) records the BRD400DLR product DOI, public BKG archive, original NAV SHA-256, original one-based line spans and block hashes, and the microfixture SHA-256. The unchanged header includes `LEAP SECONDS` and the DLR DOI. Selection uses G04 competing LNAV/CNAV records, R02 FDMA, E03 INAV, C02 D2, I03 LNAV, and J04 LNAV/CNAV. This is a deliberately small behavior sample, not a completeness claim about the daily product.
 
-Run from this repository root. The fixture is made from the original Septentrio OBS and DLR mixed NAV files named in `tests/fixtures/mixed_2024131_first_epoch_manifest.json`. The manifest records original SHA-256 values, fixture SHA-256 values, original one-based line spans, per-record hashes, and all 56 OBS SV labels. The extractor copies the original header and records as bytes. It does not normalize RINEX field widths, values, or line endings.
+The source is [DLR/GSOC's BRD400DLR product](https://igs.org/mgex/mgex-product-descriptions/), credited to O. Montenbruck and P. Steigenberger. [IGS MGEX](https://www.igs.org/mgex/) states that its data and products are freely available for public use and requests citation when used in a publication. The repository preserves the source header and identifies the provider and DOI. The tests check selected record identity and numerical algorithms, not physical satellite-position accuracy.
 
-The OBS slice contains the header and the complete 2024-05-10 03:00:00 GPST epoch. The NAV slice contains the header and 879 EPH blocks for those 56 SVs with the raw ToC label within the constellation selection half-window plus 60 s of the query label. The extra minute covers differences between the raw constellation clock labels and GPST; the Rust selector makes the actual time and validity decision. The 879 raw blocks have 822 distinct (SV, message, ToC label) triples; the parsed NAV has 822 EPH keys and reports zero rejected or unsupported parse records. Do not interpret the 57 repeated triples as 57 independent selected candidates.
-
-## Run
+From the repository root:
 
 ```sh
 cargo test --offline --features nav --test nav_mixed_first_epoch
-cargo run --offline --features nav --example nav_first_epoch -- \
-  tests/fixtures/obs_mixed_2024131_first_epoch.rnx \
-  tests/fixtures/nav_mixed_2024131_first_epoch.rnx
+cargo run --offline --features nav --example nav_frame -- tests/fixtures/nav_mixed_2024131_first_epoch.rnx G04 '2024-05-10T03:00:00 GPST' --target itrf2014
+python3 tests/support/extract_mixed_nav_first_epoch.py /path/to/BRD400DLR_S_20241310000_01D_MN.rnx
 ```
 
-Append `--candidates` to print each candidate's message, ToC, ToE, raw health value, and rejection, plus any parse diagnostics. To check fixture selection against the original NAV, append `--compare-nav /path/to/BRD400DLR_S_20241310000_01D_MN.rnx`; this reads the entire original once. Re-create the fixtures only when the original hashes match:
+The last command requires the full DLR NAV source with the manifest's exact hash and rebuilds the tracked microfixture from its original bytes. For a no-path example, change `G04` to `C02` and the target to `itrf2020`: `nav_frame` prints native XYZ with the source label, then `frame_error=UnknownSourceRealization` and exits nonzero. The native XYZ must not be read as ITRF2020 XYZ.
 
-```sh
-python3 tests/support/extract_mixed_nav_first_epoch.py /path/to/test_obs_read-SDUZ00ATA_R_20241310300_01H_01S_MO.rnx /path/to/BRD400DLR_S_20241310000_01D_MN.rnx
-```
-
-The 56-row CLI uses `UnknownHealthPolicy::Reject`, `FrameRequest::Wgs84`, and `TransformOptions::default()`. It displays the original OBS SV labels, selected message/ToC/ToE, health field, candidate rejection counts, native XYZ in km, source realization and evidence, output or the original `FrameError`, catalog, ordered edges, and any CAUTION note. `selection=none` has no invented native state. `propagation_error` and `point_error` have separate categories.
-
-For a single selected record and a concrete target, use:
-
-```sh
-cargo run --offline --features nav --example nav_frame -- \
-  tests/fixtures/nav_mixed_2024131_first_epoch.rnx G04 \
-  '2024-05-10T03:00:00 GPST' --target itrf2014
-```
-
-`--target` accepts `wgs84`, `g2296`, `itrf2020`, `itrf2014`, `pz9011`, `jgs2014`, `jgs2020`, `gtrf23v01`, or `bdcs2019v01`. Frame failure prints the native state and `frame_error` to identify the stage that failed. See `nav_all_frame_targets.md` for the current date-dependent coverage.
-
-## Observed F1 result
-
-This is the F1 baseline before the verified R02 and subsequent mixed-frame
-extensions. See `nav_glonass_r02_mixed_frame.md` and
-`nav_mixed_remaining_frames.md` for the current 56-row result.
-
-The original and fixture selected the same key for all 56 SVs. With the default request, 11 were `NativeIdentity`; 9 had no selected record; the remainder were 17 `NoPath`, 15 `UnknownSourceRealization`, 3 `UnsupportedSource(NavicBroadcastWgs84)`, and 1 `UnsupportedSource(SbasBroadcast)`. In particular, G04 was native WGS84/G2296; R02 and E03 propagated but had `NoPath`; C02 propagated with unknown source realization; I03 propagated but had unsupported NavIC source; J04 had no selected record, with unhealthy and unsupported message candidates. These are observations of this code and input, not frame accuracy validation.
-
-The CLI also checks whether `t_rx - pseudorange/c` changes the selected key for each SV with a positive first pseudorange. It found zero changes. This is a selection sensitivity check only: it does not correct satellite or receiver clocks or atmospheric delay, so the computed instant is not a validated transmit time.
-
-## VS Code Debug Test
-
-With the repo open in VS Code and Rust Analyzer available, open `tests/nav_mixed_first_epoch.rs` and use **Debug Test** above `representative_real_records_keep_selection_propagation_and_frame_errors_distinct`. Set a breakpoint at the `nav_select_ephemeris` call and inspect `sv`, `t`, `report.candidates`, `report.selected`, then step through `spatial_state_at` and `FrameTransformer.to_frame`. Check that a selected record's `native.state.position_km` exists before a frame error, while J04 has no selected record. VS Code breakpoint behavior remains for the user to verify locally; the terminal test does not establish debugger availability.
+In VS Code, use **Debug Test** on `representative_real_records_keep_selection_propagation_and_frame_errors_distinct` in `tests/nav_mixed_first_epoch.rs`. Break at `NavCandidate::spatial_state_at` and `FrameTransformer::to_frame_inner`; inspect `chosen.key`, `native.state.position_km`, `point.realization`, and the returned `FrameError`. VS Code breakpoint operation remains for the user to verify.

@@ -79,7 +79,7 @@ fn r02_reaches_g2296_with_three_ordered_edges_and_weakest_status() {
     let expected = reference();
     assert_eq!(
         expected["fixture_sha256"],
-        "324cbfaab4bc404490d8af375fa20b7324f04cfcae4a3b91aca6a68add8040d6"
+        "dce340cf859c06b7785596f379f1bbf39f8042042629309adc9fbdc2f322c69e"
     );
     assert_eq!(expected["propagation_seconds"], 882.0);
     let point = r02_point();

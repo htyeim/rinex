@@ -47,7 +47,7 @@ other RINEX-like formats have their own parser:
 
 ## Warnings :warning:
 
-- Navigation is currently not feasible with Glonass, SBAS and IRNSS
+- Supported GLONASS FDMA, SBAS, and NavIC broadcast messages can produce native satellite states with the `nav` feature; full positioning and precise orbit accuracy are not established
 - File production might lack some features, mostly because we're currently focused on data processing
 
 ## NAV parse diagnostics
@@ -58,7 +58,7 @@ Use `parse_strict`, `from_file_strict`, or `from_gzip_file_strict` to return an 
 
 ## GPS LNAV native state (`nav` feature)
 
-`nav_select_gps_lnav(sv, t, UnknownHealthPolicy::Reject)` reports every decoded ephemeris for that satellite, including why a record was rejected. Call `chosen().and_then(|candidate| candidate.native_state_at(t).ok())` for the selected record's position in km, velocity in km/s, and satellite clock correction in seconds. The position and velocity use GPS broadcast WGS-84 axes; the NAV message does not name a WGS-84 realization. The clock omits signal group delay. No terrestrial-frame conversion or antenna correction is applied. Unknown health can be allowed explicitly; unhealthy records are always rejected. The 2-hour half-window around each of ToE and ToC is exclusive; it is a library selection policy, not a clock accuracy guarantee.
+`nav_select_gps_lnav(sv, t, UnknownHealthPolicy::Reject)` reports the candidate ephemerides retained in the `NavKey` record map for that satellite, including why a record was rejected. Call `chosen().and_then(|candidate| candidate.native_state_at(t).ok())` for the selected record's position in km, velocity in km/s, and satellite clock correction in seconds. The position and velocity use GPS broadcast WGS-84 axes; the NAV message does not name a WGS-84 realization. The clock omits signal group delay. No terrestrial-frame conversion or antenna correction is applied. Unknown health can be allowed explicitly; unhealthy records are always rejected. The 2-hour half-window around each of ToE and ToC is exclusive; it is a library selection policy, not a clock accuracy guarantee.
 
 | Decoded NAV record | Selection and native position/velocity |
 | --- | --- |
@@ -67,13 +67,13 @@ Use `parse_strict`, `from_file_strict`, or `from_gzip_file_strict` to return an 
 
 ## GLONASS FDMA native state (`nav` feature)
 
-`nav_select_glonass_fdma(sv, t, UnknownHealthPolicy::Reject)` reports all decoded ephemerides for the satellite and selects a propagatable GLONASS FDMA or legacy LNAV record. `chosen().unwrap().fdma_state_at(t)` gives position (km), rotating-axis velocity (km/s), and satellite clock correction (s) in native broadcast PZ-90 axes. The record does not specify a PZ-90 realization. The clock uses `-TauN + GammaN * (t - Tb)` and excludes TauC and signal delays; the third clock slot is frame time, not quadratic drift. The integration window is `|t - Tb| < 900 s`, exclusive. This selector rejects other GLONASS message types, missing acceleration, unhealthy or invalid data, and candidates whose propagation fails. It does not convert to WGS-84 or ITRF.
+`nav_select_glonass_fdma(sv, t, UnknownHealthPolicy::Reject)` reports candidate ephemerides retained in the `NavKey` record map for the satellite and selects a propagatable GLONASS FDMA or legacy LNAV record. `chosen().unwrap().fdma_state_at(t)` gives position (km), rotating-axis velocity (km/s), and satellite clock correction (s) in native broadcast PZ-90 axes. The record does not specify a PZ-90 realization. The clock uses `-TauN + GammaN * (t - Tb)` and excludes TauC and signal delays; the third clock slot is frame time, not quadratic drift. The integration window is `|t - Tb| < 900 s`, exclusive. This selector rejects other GLONASS message types, missing acceleration, unhealthy or invalid data, and candidates whose propagation fails. It does not convert to WGS-84 or ITRF.
 
 Real V2/V3 legacy LNAV and V4 FDMA selection are exercised in `tests/nav_glonass_fdma.rs`. The V4 R01 reference states come from the independent script `tests/reference/glonass_fdma_r01.py`; source, equations, and numerical limits are recorded in `tests/reference/GLONASS_FDMA.md`. Run `cargo test --features nav --test nav_glonass_fdma` from the repository root. The numerical comparison verifies this implementation against the recorded integration algorithm, not precise orbit accuracy.
 
 ## Additional native NAV states (`nav` feature)
 
-`nav_select_ephemeris(sv, t, UnknownHealthPolicy::Reject)` ranks decoded records only after checking message support, orbit and clock windows, health, required fields, and whether the selected propagator can produce a finite state at `t`. The result reports every candidate and its rejection reason. Call `kepler_state_at(t)` for the Kepler families below, `sbas_state_at(t)` for SBAS, or `fdma_state_at(t)` for GLONASS. The states return native broadcast terrestrial axes, position in km, rotating-axis velocity in km/s, and satellite clock correction in seconds without signal group delay. They do not perform a terrestrial-frame conversion.
+`nav_select_ephemeris(sv, t, UnknownHealthPolicy::Reject)` ranks records retained in the `NavKey` map only after checking message support, orbit and clock windows, health, required fields, and whether the selected propagator can produce a finite state at `t`. The result reports each retained candidate and its rejection reason. Records with the same `NavKey` overwrite earlier entries during parsing, so the report is not a count of every raw input block. Call `kepler_state_at(t)` for the Kepler families below, `sbas_state_at(t)` for SBAS, or `fdma_state_at(t)` for GLONASS. The states return native broadcast terrestrial axes, position in km, rotating-axis velocity in km/s, and satellite clock correction in seconds without signal group delay. They do not perform a terrestrial-frame conversion.
 
 | NAV record | Native frame and state | Reference test |
 | --- | --- | --- |
@@ -92,7 +92,7 @@ The Kepler selectors apply each message's existing exclusive orbit half-window i
 
 For GPS LNAV in the supported 2024 catalogue window, `NavCandidate::spatial_state_at(t)` retains the NAV identity and native WGS-84 position. `state.to_frame(FrameRequest::Realization(FrameId::Itrf2014))` applies the dated G2296 → ITRF2020 → ITRF2014 position path. `FrameTransformer::to_frame` accepts a caller-asserted Earth-fixed point in km through `SpatialPoint::new`; the coordinate epoch is required. Results include the resolved source and target realizations, operation IDs, and provenance. Cross-frame velocity is unavailable, and an asserted strict position bound is rejected. Other constellations do not inherit the GPS G2296 realization. See [the G15 reference and limits](tests/reference/nav_frame_transform.md); run `cargo test --features nav --test nav_frame_transform` or `cargo run --features nav --example nav_frame -- tests/fixtures/nav_gps_g15_g2296_2024128.rnx G15 '2024-05-07T02:05:00 GPST'`.
 
-Other ITRF2014 positions use narrowly scoped paths. Inspect `position_status()`, `source_realization`, `source_evidence`, and any `assumption` along with the XYZ. `MarkedApproximation` has a documented source but no strict satellite-position bound; `NominalAssumption` has an unverified source-to-target frame relation. Both withhold target-frame velocity and can be rejected with `warnings_as_errors`.
+Other ITRF2014 positions use narrowly scoped paths. Inspect `position_status()`, `source_realization`, `source_evidence`, ordered `edge_info`, and cautions alongside XYZ. `MarkedApproximation` has documented path evidence but no strict satellite-position bound; it withholds target-frame velocity and can be rejected with `warnings_as_errors`. Without a documented path, conversion returns the specific `FrameError`.
 
 | NAV source and accepted period | ITRF2014 path | Limits and reference |
 | --- | --- | --- |
@@ -100,28 +100,42 @@ Other ITRF2014 positions use narrowly scoped paths. Inspect `position_status()`,
 | QZSS J02 LNAV, 2021-02-16 to 2023-11-08 UTC | JGS aligned-period zero-offset approximation | [J02](tests/reference/nav_qzss_frame_approx.md); no strict bound |
 | Galileo INAV/FNAV, 2024-05 UTC | GTRF23v01 approximate alignment to ITRF2020, then dated ITRF2014 transform | [INAV](tests/reference/nav_galileo_frame_approx.md), [FNAV](tests/reference/nav_galileo_fnav_frame_approx.md); 2022 records remain unresolved |
 | BeiDou C10 D1 IGSO, C20 D1 MEO, C05 D2 GEO, 2022-06 UTC | BDCS(2019v01) zero-offset approximation | [IGSO](tests/reference/nav_bds_igso_frame_approx.md), [MEO](tests/reference/nav_bds_meo_frame_approx.md), [GEO](tests/reference/nav_bds_geo_frame_approx.md); date applicability is inferred |
-| NavIC I02 LNAV reference record, within its propagation window | Warned nominal copy of WGS-84-family XYZ | [I02](tests/reference/nav_navic_nominal_frame.md); concrete source realization unknown |
-| GAGAN S27 SBAS reference record, within its propagation window | Warned nominal copy of SBAS XYZ | [S27](tests/reference/nav_sbas_s27_nominal_frame.md); concrete source realization and physical alignment unknown |
+| NavIC I02 LNAV | No ITRF path; native WGS-84-family state remains available | [I02](tests/reference/nav_navic_nominal_frame.md); concrete source realization unknown |
+| GAGAN S27 SBAS | No ITRF path; native SBAS state remains available | [S27](tests/reference/nav_sbas_s27_nominal_frame.md); concrete source realization unknown |
 
-All ranges above are library restrictions, not guarantees of physical frame accuracy. Outside an evidenced path, a selected and propagated NAV state may receive a clearly marked nominal diagnostic coordinate; rejected NAV records receive no coordinate. The `nav_frame` example prints `position_status`, a `CAUTION` note, and an assumption ID when present.
+All ranges above are library restrictions, not guarantees of physical frame accuracy. Outside an evidenced path, conversion returns `Err(FrameError)` while the selected state retains native XYZ, source identity, and provenance. Rejected NAV records have no propagated state. `nav_frame` prints the native state before requesting a target frame and shows either the ordered path or the error.
 
-The current [full frame-target matrix](tests/reference/nav_all_frame_targets.md) covers all eight `FrameId` requests, including dated reverse approximations for PZ-90.11, QZSS JGS, Galileo GTRF23v01 and BeiDou BDCS2019v01. `nav_frame --target` accepts `g2296`, `itrf2020`, `itrf2014`, `pz9011`, `jgs2014`, `jgs2020`, `gtrf23v01`, and `bdcs2019v01`; `wgs84` remains the generic request. Inspect ordered `edge_info`, `fallback_reason` and every `CAUTION` before using a target XYZ. A concrete target label on `NominalAssumption` does not establish a physical frame conversion.
+The [frame request reference](tests/reference/nav_all_frame_targets.md) covers all eight `FrameId` labels and their evidenced dated paths, including reverse approximations for PZ-90.11, QZSS JGS, Galileo GTRF23v01 and BeiDou BDCS2019v01. `nav_frame --target` accepts `g2296`, `itrf2020`, `itrf2014`, `pz9011`, `jgs2014`, `jgs2020`, `gtrf23v01`, and `bdcs2019v01`; `wgs84` remains the generic request. Inspect ordered `edge_info` and every `CAUTION` before using target XYZ. An `Err` preserves the native state; it does not provide coordinates in the requested frame.
 
 ### Upstream API review and migration
 
-This PR changes public behavior and source compatibility. Maintainers should decide whether these breaks are acceptable before merging:
+These APIs changed during the NAV work and require maintainer compatibility review before release:
 
 | Earlier use | Current path and limitation |
 | --- | --- |
 | `Ephemeris::kepler2position(sv, t)` returning ANISE `Orbit` | Select a matching NAV record and call `native_state_at`, `fdma_state_at`, `sbas_state_at`, or `kepler_state_at`. The returned broadcast XYZ is not an ANISE `Orbit`; `kepler2position_velocity` remains a raw, unlabeled calculation. |
 | `Rinex::sv_orbit(sv, t)` | Use `nav_select_ephemeris(sv, t, policy)` and propagate the chosen candidate. Selection and supported message coverage differ from the old raw lookup; no equivalent `Orbit` return is provided. |
-| `Rinex::nav_azimuth_elevation_range(sv, t, rx_orbit, almanac)` | There is no drop-in replacement. The caller must establish compatible terrestrial frames and epochs for satellite and receiver, then perform geometry with a suitable library. Nominal or unbounded approximate ITRF results are not verified ANISE frame inputs. |
+| `Rinex::nav_azimuth_elevation_range(sv, t, rx_orbit, almanac)` | There is no drop-in replacement. The caller must establish compatible terrestrial frames and epochs for satellite and receiver, then perform geometry with a suitable library. Unbounded approximate ITRF results are not verified ANISE frame inputs. |
 | External `Rinex { ... }` struct literal | Use `Rinex::new(header, record)` and set public `comments` and `production` as needed. The added private parse-report field prevents external struct literal construction. |
 | `Record::parse` on NAV input | A rejected known-layout NAV record now returns an error. Use `Rinex::parse` or file constructors for lenient reading with `nav_parse_report()` diagnostics; use their `*_strict` variants for fail-fast behavior. Direct `Record::parse` has no equivalent diagnostics accessor. |
 
-These migrations do not restore the old ANISE `Orbit` semantics. `nav_ephemeris_selection` remains a raw ephemeris lookup. Frame applicability and warning status must be inspected before downstream geometry.
+These migrations do not restore the old ANISE `Orbit` semantics. `nav_ephemeris_selection` remains a raw ephemeris lookup. The frame converter also now returns `Err(FrameError)` where earlier revisions returned a copied, nominally relabeled XYZ; `PositionStatus::NominalAssumption` and its result metadata were removed. Frame applicability and warning status must be inspected before downstream geometry.
 
-The G02 V4 test fixture is an unchanged excerpt of `data/NAV/V4/KMS300DNK_R_20221591000_01H_MN.rnx.gz` at data submodule commit `209bfbd7016bd654f256238768a9e030ec5ab299` (MPL-2.0); the original compressed SHA-256 is `2bae4217cb71ad4a2b9c0067bd1c5b56915e42d2007a94e91eb408468cc4763f`. `tests/reference/nav_gps_lnav.py` independently reads the fixed RINEX slots and evaluates the broadcast equations, adapted from RTKLIB `eph2pos` at commit `180043ee24b6d2b168f98b64be15f69d50046b1a`. From the repository root, run `python3 tests/reference/nav_gps_lnav.py` to inspect its JSON on stdout, then `cargo test --features nav --test nav_gps_lnav`. The position, velocity, and clock tolerances in the test assess this algorithm against the independent calculation; they do not establish precise-orbit accuracy.
+A caller can preserve a native diagnostic state after a frame error:
+
+```rust
+let native = chosen.spatial_state_at(t)?;
+match native.state.to_frame(request) {
+    Ok(result) => { /* inspect result.position_status() and result.cautions() */ }
+    Err(reason) => {
+        let native_xyz_km = native.state.position_km;
+        let native_source = native.state.source();
+        eprintln!("frame error: {reason}; native source: {native_source:?}; native XYZ: {native_xyz_km:?}");
+    }
+}
+```
+
+The G02 V4 test fixture `tests/fixtures/nav_gps_g02_lnav_2022159.rnx` (SHA-256 `8dd9cf1925d8cfa7c7d4fddb79509427986495e8b08d418aec2951934e354f62`) is an unchanged excerpt of `data/NAV/V4/KMS300DNK_R_20221591000_01H_MN.rnx.gz` at data submodule commit `209bfbd7016bd654f256238768a9e030ec5ab299` (MPL-2.0); the original compressed SHA-256 is `2bae4217cb71ad4a2b9c0067bd1c5b56915e42d2007a94e91eb408468cc4763f`. `tests/reference/nav_gps_lnav.py` independently reads the fixed RINEX slots and evaluates the broadcast equations, adapted from RTKLIB `eph2pos` at commit `180043ee24b6d2b168f98b64be15f69d50046b1a`. From the repository root, run `python3 tests/reference/nav_gps_lnav.py` to inspect its JSON on stdout, then `cargo test --features nav --test nav_gps_lnav`. The position, velocity, and clock tolerances in the test assess this algorithm against the independent calculation; they do not establish precise-orbit accuracy.
 
 ## Citation and referencing
 

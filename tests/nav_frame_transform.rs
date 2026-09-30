@@ -279,18 +279,11 @@ fn navic_nav_state_gets_diagnostic_wgs84_without_entering_gps_frame_path() {
         native.state.source(),
         SourceFrameIdentity::NavicBroadcastWgs84
     );
-    let result = native.state.to_frame(FrameRequest::Wgs84).unwrap();
     assert_eq!(
-        result.position_status(),
-        rinex::navigation::rinex::spatial_state::PositionStatus::NominalAssumption
+        native.state.to_frame(FrameRequest::Wgs84).unwrap_err(),
+        FrameError::UnsupportedSource(SourceFrameIdentity::NavicBroadcastWgs84)
     );
-    assert_eq!(
-        result.fallback_reason,
-        Some(FrameError::UnsupportedSource(
-            SourceFrameIdentity::NavicBroadcastWgs84
-        ))
-    );
-    assert_eq!(result.position_km, native.state.position_km);
+    assert!(native.state.position_km.iter().all(|v| v.is_finite()));
 }
 
 #[test]
