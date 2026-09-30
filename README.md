@@ -96,14 +96,16 @@ Other ITRF2014 positions use narrowly scoped paths. Inspect `position_status()`,
 
 | NAV source and accepted period | ITRF2014 path | Limits and reference |
 | --- | --- | --- |
-| GLONASS FDMA/LNAV, 2014-01-15 to 2024-12-31 UTC | PZ-90.11 fixed-parameter approximation | [R01](tests/reference/nav_glonass_frame_approx.md); one-way, no strict bound |
-| QZSS J02 LNAV, 2021-02-16 to 2023-11-09 UTC | JGS aligned-period zero-offset approximation | [J02](tests/reference/nav_qzss_frame_approx.md); no strict bound |
+| GLONASS FDMA/LNAV, 2014-01-15 to 2024-12-31 UTC | PZ-90.11 fixed-parameter approximation | [R01](tests/reference/nav_glonass_frame_approx.md); reverse operation is also marked approximate, with no strict bound |
+| QZSS J02 LNAV, 2021-02-16 to 2023-11-08 UTC | JGS aligned-period zero-offset approximation | [J02](tests/reference/nav_qzss_frame_approx.md); no strict bound |
 | Galileo INAV/FNAV, 2024-05 UTC | GTRF23v01 approximate alignment to ITRF2020, then dated ITRF2014 transform | [INAV](tests/reference/nav_galileo_frame_approx.md), [FNAV](tests/reference/nav_galileo_fnav_frame_approx.md); 2022 records remain unresolved |
 | BeiDou C10 D1 IGSO, C20 D1 MEO, C05 D2 GEO, 2022-06 UTC | BDCS(2019v01) zero-offset approximation | [IGSO](tests/reference/nav_bds_igso_frame_approx.md), [MEO](tests/reference/nav_bds_meo_frame_approx.md), [GEO](tests/reference/nav_bds_geo_frame_approx.md); date applicability is inferred |
 | NavIC I02 LNAV reference record, within its propagation window | Warned nominal copy of WGS-84-family XYZ | [I02](tests/reference/nav_navic_nominal_frame.md); concrete source realization unknown |
 | GAGAN S27 SBAS reference record, within its propagation window | Warned nominal copy of SBAS XYZ | [S27](tests/reference/nav_sbas_s27_nominal_frame.md); concrete source realization and physical alignment unknown |
 
-All ranges above are library restrictions, not guarantees of physical frame accuracy. Other sources, messages, and dates are rejected for these paths. The `nav_frame` example prints `position_status`, a `CAUTION` note, and an assumption ID when present.
+All ranges above are library restrictions, not guarantees of physical frame accuracy. Outside an evidenced path, a selected and propagated NAV state may receive a clearly marked nominal diagnostic coordinate; rejected NAV records receive no coordinate. The `nav_frame` example prints `position_status`, a `CAUTION` note, and an assumption ID when present.
+
+The current [full frame-target matrix](tests/reference/nav_all_frame_targets.md) covers all eight `FrameId` requests, including dated reverse approximations for PZ-90.11, QZSS JGS, Galileo GTRF23v01 and BeiDou BDCS2019v01. `nav_frame --target` accepts `g2296`, `itrf2020`, `itrf2014`, `pz9011`, `jgs2014`, `jgs2020`, `gtrf23v01`, and `bdcs2019v01`; `wgs84` remains the generic request. Inspect ordered `edge_info`, `fallback_reason` and every `CAUTION` before using a target XYZ. A concrete target label on `NominalAssumption` does not establish a physical frame conversion.
 
 ### Upstream API review and migration
 

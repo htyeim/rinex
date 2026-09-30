@@ -1,4 +1,4 @@
-> Historical GLONASS unit snapshot. For the current F4 first-epoch classification, see `nav_f4_frame_paths.md`.
+> Historical GLONASS unit snapshot. For the current first-epoch classification, see `nav_directed_frame_paths.md`.
 
 # F2 GLONASS source unit: R02 at 2024-05-10 03:00 GPST
 

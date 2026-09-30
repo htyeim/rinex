@@ -13,7 +13,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut args = std::env::args().skip(1);
     let file = args
         .next()
-        .ok_or("usage: nav_frame FILE SV EPOCH [--target wgs84|g2296|itrf2020|itrf2014] [--warnings-as-errors] [--allow-unknown-health]")?;
+        .ok_or("usage: nav_frame FILE SV EPOCH [--target wgs84|g2296|itrf2020|itrf2014|pz9011|jgs2014|jgs2020|gtrf23v01|bdcs2019v01] [--warnings-as-errors] [--allow-unknown-health]")?;
     let sv = SV::from_str(&args.next().ok_or("missing SV")?)?;
     let epoch = Epoch::from_str(&args.next().ok_or("missing epoch")?)?;
     let mut strict = false;
@@ -29,8 +29,19 @@ fn main() -> Result<(), Box<dyn Error>> {
                     Some("g2296") => FrameRequest::Realization(FrameId::Wgs84G2296),
                     Some("itrf2020") => FrameRequest::Realization(FrameId::Itrf2020),
                     Some("itrf2014") => FrameRequest::Realization(FrameId::Itrf2014),
+                    Some("pz9011") => FrameRequest::Realization(FrameId::Pz90_11),
+                    Some("jgs2014") => {
+                        FrameRequest::Realization(FrameId::QzssJgsItrf2014Aligned)
+                    },
+                    Some("jgs2020") => {
+                        FrameRequest::Realization(FrameId::QzssJgsItrf2020Aligned)
+                    },
+                    Some("gtrf23v01") => {
+                        FrameRequest::Realization(FrameId::GalileoGtrf23v01)
+                    },
+                    Some("bdcs2019v01") => FrameRequest::Realization(FrameId::Bdcs2019v01),
                     _ => {
-                        return Err("unknown target; use wgs84, g2296, itrf2020, or itrf2014".into())
+                        return Err("unknown target; use wgs84, g2296, itrf2020, itrf2014, pz9011, jgs2014, jgs2020, gtrf23v01, or bdcs2019v01".into())
                     },
                 };
             },

@@ -1,4 +1,4 @@
-> Historical F1/F2 snapshot. For the current F4 diagnostic behavior and validation, see `nav_f4_frame_paths.md`.
+> Historical mixed-NAV snapshot. For current diagnostic behavior and validation, see `nav_directed_frame_paths.md`.
 
 # 2024-05-10 mixed NAV first-epoch diagnostic (F1)
 
@@ -31,7 +31,7 @@ cargo run --offline --features nav --example nav_frame -- \
   '2024-05-10T03:00:00 GPST' --target itrf2014
 ```
 
-`--target` accepts `wgs84`, `g2296`, `itrf2020`, or `itrf2014`. Frame failure prints the native state and `frame_error` to identify the stage that failed.
+`--target` accepts `wgs84`, `g2296`, `itrf2020`, `itrf2014`, `pz9011`, `jgs2014`, `jgs2020`, `gtrf23v01`, or `bdcs2019v01`. Frame failure prints the native state and `frame_error` to identify the stage that failed. See `nav_all_frame_targets.md` for the current date-dependent coverage.
 
 ## Observed F1 result
 

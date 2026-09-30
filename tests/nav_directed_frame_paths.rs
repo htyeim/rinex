@@ -1,4 +1,4 @@
-//! F4 first unit: selected real mixed NAV records and explicit diagnostic boundaries.
+//! Selected mixed NAV records and explicit frame-diagnostic boundaries.
 #![cfg(feature = "nav")]
 use rinex::{
     navigation::rinex::{
@@ -272,7 +272,7 @@ fn unavailable_catalog_relation_preserves_known_source_and_reason() {
     let result = FrameTransformer
         .to_frame(
             &point,
-            FrameRequest::Realization(FrameId::Pz90_11),
+            FrameRequest::Realization(FrameId::QzssJgsItrf2014Aligned),
             TransformOptions::default(),
         )
         .unwrap();
@@ -281,7 +281,10 @@ fn unavailable_catalog_relation_preserves_known_source_and_reason() {
         result.source_realization,
         FrameRealization::Known(FrameId::GalileoGtrf23v01)
     );
-    assert_eq!(result.fallback_reason, Some(FrameError::NoPath));
+    assert_eq!(
+        result.fallback_reason,
+        Some(FrameError::OutsideCatalogWindow)
+    );
     assert_eq!(result.position_km, native.state.position_km);
 }
 

@@ -22,7 +22,7 @@ day-stamped ESA statement, that GTRF23v01 remained applicable for this
 2024-06-01 00:00:00 UTC (exclusive end). This is a deliberately narrow
 library policy, not the official full validity interval. NAV record, orbit
 reference, and evaluation instants must all be inside it. The older
-2022-06-08 E08 remains physically unresolved; F4 returns only a marked nominal diagnostic after NAV checks. FNAV is a separate unit.
+2022-06-08 E08 remains physically unresolved; the current API returns only a marked nominal diagnostic after NAV checks. FNAV has a separate regression fixture.
 
 ESA gives a GTRF-to-ITRF alignment requirement of 3 cm (2σ) for reference
 stations. It publishes no seven-parameter GTRF23v01 → ITRF2020 correction

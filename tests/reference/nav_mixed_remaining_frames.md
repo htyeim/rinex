@@ -1,4 +1,4 @@
-> Historical F1/F2 snapshot. For the current F4 diagnostic behavior and validation, see `nav_f4_frame_paths.md`.
+> Historical mixed-NAV snapshot. For current diagnostic behavior and validation, see `nav_directed_frame_paths.md`.
 
 # Mixed NAV remaining frame decision, 2024-05-10 03:00 GPST
 
