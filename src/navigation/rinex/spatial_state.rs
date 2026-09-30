@@ -35,6 +35,8 @@ pub enum FrameId {
     Pz90_11,
     /// QZSS PNT JGS aligned to ITRF2014 in the documented 2021–2023 period.
     QzssJgsItrf2014Aligned,
+    /// QZSS PNT JGS using the ITRF2020 reference from November 2023.
+    QzssJgsItrf2020Aligned,
     /// Galileo GTRF23v01, aligned to ITRF2020 from 2023-05-05.
     GalileoGtrf23v01,
     /// BeiDou BDCS(2019v01), inferred for dated C10/C20 D1 and C05 D2 samples.
@@ -184,6 +186,14 @@ impl NavCandidate<'_> {
             (
                 FrameRealization::Known(FrameId::QzssJgsItrf2014Aligned),
                 Some(QZSS_JGS2014_SOURCE_EVIDENCE),
+            )
+        } else if source == SourceFrameIdentity::QzssBroadcastJgs
+            && self.key.msgtype == NavMessageType::LNAV
+            && qzss_jgs2020_resolved(self.key.epoch, self.orbit_reference, t)
+        {
+            (
+                FrameRealization::Known(FrameId::QzssJgsItrf2020Aligned),
+                Some(QZSS_JGS2020_SOURCE_EVIDENCE),
             )
         } else if source == SourceFrameIdentity::GalileoBroadcastGtrf
             && matches!(
@@ -578,7 +588,7 @@ fn nominal_sample_for(
     None
 }
 
-const CATALOG_VERSION: &str = "N09d-SBAS-S27-nominal-approx-v7";
+const CATALOG_VERSION: &str = "N09d-mixed-frame-approx-v9";
 const NAVIC_I02_ASSUMPTION: FrameAssumptionInfo = FrameAssumptionInfo {
     id: "rinex:NavIC-I02:unknown-WGS84-to-nominal-ITRF2014:zero-v1",
     source_url: "https://www.isro.gov.in/media_isro/pdf/Missions/irnss_sps_icd_version1.1-2017.pdf",
@@ -600,6 +610,8 @@ const G2296_SOURCE_EVIDENCE: &str = "https://www.navcen.uscg.gov/gps-constellati
 const PZ9011_TO_ITRF2014: &str = "ICG:2018:PZ90.11-to-ITRF2014:static-2010-approx";
 const QZSS_JGS2014_SOURCE_EVIDENCE: &str = "QZSS:PNT-coordinate-system:2023-11-10:JGS-ITRF2014-period; QZSS:PNT-update-complete:2021-02-15";
 const QZSS_JGS2014_TO_ITRF2014: &str = "QZSS:PNT:JGS-ITRF2014-alignment:zero-offset-approx";
+const QZSS_JGS2020_SOURCE_EVIDENCE: &str = "https://qzss.go.jp/en/technical/dod/pnt/coordinate-system.html (broadcast JGS; ITRF2020 applied from 2023-11-09)";
+const QZSS_JGS2020_TO_ITRF2020: &str = "QZSS:PNT:JGS-ITRF2020-alignment:zero-offset-approx";
 const GALILEO_GTRF23_SOURCE_EVIDENCE: &str =
     "ESA:GGSP:GTRF23v01:applicable-2023-05-05; ICG18:2024:planned-GTRF-update";
 const GTRF23_TO_ITRF2020: &str = "ESA:GGSP:GTRF23v01-ITRF2020:zero-offset-approx";
@@ -616,7 +628,18 @@ const ITRF_INVERSE_EDGE: &[&str] = &["ITRF2020:Table2:2015.0:inverse"];
 const G2296_THEN_ITRF: &[&str] = &[G2296_TO_ITRF2020, ITRF2020_TO_ITRF2014];
 const ITRF_THEN_G2296: &[&str] = &["ITRF2020:Table2:2015.0:inverse", "EPSG:10608:inverse"];
 const PZ9011_EDGE: &[&str] = &[PZ9011_TO_ITRF2014];
+const PZ9011_THEN_ITRF2020: &[&str] = &[PZ9011_TO_ITRF2014, "ITRF2020:Table2:2015.0:inverse"];
+const PZ9011_THEN_G2296: &[&str] = &[
+    PZ9011_TO_ITRF2014,
+    "ITRF2020:Table2:2015.0:inverse",
+    "EPSG:10608:inverse",
+];
 const QZSS_JGS2014_EDGE: &[&str] = &[QZSS_JGS2014_TO_ITRF2014];
+const QZSS_JGS2020_EDGE: &[&str] = &[QZSS_JGS2020_TO_ITRF2020];
+const QZSS_JGS2020_THEN_ITRF2014: &[&str] = &[QZSS_JGS2020_TO_ITRF2020, ITRF2020_TO_ITRF2014];
+const QZSS_JGS2020_THEN_G2296: &[&str] = &[QZSS_JGS2020_TO_ITRF2020, "EPSG:10608:inverse"];
+const GTRF23_EDGE: &[&str] = &[GTRF23_TO_ITRF2020];
+const GTRF23_THEN_G2296: &[&str] = &[GTRF23_TO_ITRF2020, "EPSG:10608:inverse"];
 const GTRF23_THEN_ITRF2014: &[&str] = &[GTRF23_TO_ITRF2020, ITRF2020_TO_ITRF2014];
 const BDCS2019_EDGE: &[&str] = &[BDCS2019_TO_ITRF2014];
 const G2296_INFO: FrameEdgeInfo = FrameEdgeInfo {
@@ -677,6 +700,18 @@ const QZSS_JGS2014_INFO: FrameEdgeInfo = FrameEdgeInfo {
         "PNT monitor-station offset within 0.02 m (95%); no satellite or strict upper bound",
     velocity_capability: "not established",
 };
+const QZSS_JGS2020_INFO: FrameEdgeInfo = FrameEdgeInfo {
+    id: QZSS_JGS2020_TO_ITRF2020,
+    source: FrameId::QzssJgsItrf2020Aligned,
+    target: FrameId::Itrf2020,
+    method: FrameMethod::UnboundedApproximate,
+    parameter_reference_epoch: "none; zero-offset approximation of documented ITRF2020 alignment",
+    valid_window: "2023-11-11 through 2024-12-31 UTC (conservative library window)",
+    source_url: "https://qzss.go.jp/en/technical/dod/pnt/coordinate-system.html",
+    position_metric:
+        "PNT monitor-station offset within 0.02 m (95%); no satellite or strict upper bound",
+    velocity_capability: "not established",
+};
 const GTRF23_INFO: FrameEdgeInfo = FrameEdgeInfo {
     id: GTRF23_TO_ITRF2020,
     source: FrameId::GalileoGtrf23v01,
@@ -707,7 +742,15 @@ const ITRF_INVERSE_INFO_PATH: &[FrameEdgeInfo] = &[ITRF_INVERSE_INFO];
 const G2296_THEN_ITRF_INFO: &[FrameEdgeInfo] = &[G2296_INFO, ITRF_INFO];
 const ITRF_THEN_G2296_INFO: &[FrameEdgeInfo] = &[ITRF_INVERSE_INFO, G2296_INVERSE_INFO];
 const PZ9011_INFO_PATH: &[FrameEdgeInfo] = &[PZ9011_INFO];
+const PZ9011_THEN_ITRF2020_INFO: &[FrameEdgeInfo] = &[PZ9011_INFO, ITRF_INVERSE_INFO];
+const PZ9011_THEN_G2296_INFO: &[FrameEdgeInfo] =
+    &[PZ9011_INFO, ITRF_INVERSE_INFO, G2296_INVERSE_INFO];
 const QZSS_JGS2014_INFO_PATH: &[FrameEdgeInfo] = &[QZSS_JGS2014_INFO];
+const QZSS_JGS2020_INFO_PATH: &[FrameEdgeInfo] = &[QZSS_JGS2020_INFO];
+const QZSS_JGS2020_THEN_ITRF2014_INFO: &[FrameEdgeInfo] = &[QZSS_JGS2020_INFO, ITRF_INFO];
+const QZSS_JGS2020_THEN_G2296_INFO: &[FrameEdgeInfo] = &[QZSS_JGS2020_INFO, G2296_INVERSE_INFO];
+const GTRF23_INFO_PATH: &[FrameEdgeInfo] = &[GTRF23_INFO];
+const GTRF23_THEN_G2296_INFO: &[FrameEdgeInfo] = &[GTRF23_INFO, G2296_INVERSE_INFO];
 const GTRF23_THEN_ITRF2014_INFO: &[FrameEdgeInfo] = &[GTRF23_INFO, ITRF_INFO];
 const BDCS2019_INFO_PATH: &[FrameEdgeInfo] = &[BDCS2019_INFO];
 
@@ -896,6 +939,12 @@ impl FrameTransformer {
             {
                 FrameId::QzssJgsItrf2014Aligned
             },
+            SourceFrameIdentity::QzssBroadcastJgs
+                if point.realization
+                    == FrameRealization::Known(FrameId::QzssJgsItrf2020Aligned) =>
+            {
+                FrameId::QzssJgsItrf2020Aligned
+            },
             SourceFrameIdentity::QzssBroadcastJgs => {
                 return Err(FrameError::UnknownSourceRealization)
             },
@@ -979,8 +1028,16 @@ impl FrameTransformer {
         {
             return Err(FrameError::NoPath);
         }
-        if source_id == FrameId::GalileoGtrf23v01 && target_id == FrameId::Itrf2014 {
-            if !in_gtrf23_sample_window(point.epoch) || !in_itrf_window(point.epoch) {
+        if source_id == FrameId::QzssJgsItrf2020Aligned
+            && matches!(
+                target_id,
+                FrameId::Itrf2020 | FrameId::Itrf2014 | FrameId::Wgs84G2296
+            )
+        {
+            if !in_qzss_jgs2020_window(point.epoch)
+                || (target_id == FrameId::Itrf2014 && !in_itrf_window(point.epoch))
+                || (target_id == FrameId::Wgs84G2296 && !in_g2296_window(point.epoch))
+            {
                 return Err(FrameError::OutsideCatalogWindow);
             }
             qualify_path(
@@ -994,9 +1051,77 @@ impl FrameTransformer {
             if options.require_velocity {
                 return Err(FrameError::VelocityUnavailable);
             }
-            // The first edge has no published offset parameters. The second
-            // edge uses ITRF2020 Table 2 at this point's coordinate epoch.
-            let position_km = itrf2020_to_2014(point.position_km, point.epoch);
+            let (position_km, edge_ids, edge_info) = match target_id {
+                FrameId::Itrf2020 => (point.position_km, QZSS_JGS2020_EDGE, QZSS_JGS2020_INFO_PATH),
+                FrameId::Itrf2014 => (
+                    itrf2020_to_2014(point.position_km, point.epoch),
+                    QZSS_JGS2020_THEN_ITRF2014,
+                    QZSS_JGS2020_THEN_ITRF2014_INFO,
+                ),
+                FrameId::Wgs84G2296 => (
+                    point.position_km,
+                    QZSS_JGS2020_THEN_G2296,
+                    QZSS_JGS2020_THEN_G2296_INFO,
+                ),
+                _ => unreachable!(),
+            };
+            if !position_km.iter().all(|v| v.is_finite()) {
+                return Err(FrameError::NonFiniteState);
+            }
+            return Ok(FrameResult {
+                epoch: point.epoch, source: point.source, target: target_identity,
+                source_realization: FrameRealization::Known(FrameId::QzssJgsItrf2020Aligned),
+                target_realization: FrameRealization::Known(target_id), position_km,
+                velocity_km_s: None, method: FrameMethod::UnboundedApproximate,
+                catalog_version: CATALOG_VERSION, edge_ids, edge_info,
+                source_basis: point.source_basis, source_evidence: point.source_evidence,
+                assumption: None,
+                position_accuracy_note: Some("CAUTION: QZSS PNT JGS applies ITRF2020 in this period. The JGS-to-ITRF2020 zero-offset approximation has no satellite-position or strict error bound; later catalogue edges do not remove that limitation."),
+                velocity_note: Some("cross-frame velocity is not validated"),
+            });
+        }
+        if source_id == FrameId::QzssJgsItrf2020Aligned
+            || target_id == FrameId::QzssJgsItrf2020Aligned
+        {
+            return Err(FrameError::NoPath);
+        }
+        if source_id == FrameId::GalileoGtrf23v01
+            && matches!(
+                target_id,
+                FrameId::Itrf2020 | FrameId::Itrf2014 | FrameId::Wgs84G2296
+            )
+        {
+            if !in_gtrf23_sample_window(point.epoch)
+                || (target_id == FrameId::Itrf2014 && !in_itrf_window(point.epoch))
+                || (target_id == FrameId::Wgs84G2296 && !in_g2296_window(point.epoch))
+            {
+                return Err(FrameError::OutsideCatalogWindow);
+            }
+            qualify_path(
+                PathEvidence {
+                    method: FrameMethod::UnboundedApproximate,
+                    domain: PathDomain::AnyEarthFixed,
+                },
+                point,
+                options,
+            )?;
+            if options.require_velocity {
+                return Err(FrameError::VelocityUnavailable);
+            }
+            // The first edge has no published offset parameters. Optional
+            // later numerical edges use their own dated catalogue entries.
+            let (position_km, edge_ids, edge_info) = match target_id {
+                FrameId::Itrf2020 => (point.position_km, GTRF23_EDGE, GTRF23_INFO_PATH),
+                FrameId::Itrf2014 => (
+                    itrf2020_to_2014(point.position_km, point.epoch),
+                    GTRF23_THEN_ITRF2014,
+                    GTRF23_THEN_ITRF2014_INFO,
+                ),
+                FrameId::Wgs84G2296 => {
+                    (point.position_km, GTRF23_THEN_G2296, GTRF23_THEN_G2296_INFO)
+                },
+                _ => unreachable!(),
+            };
             if !position_km.iter().all(|v| v.is_finite()) {
                 return Err(FrameError::NonFiniteState);
             }
@@ -1005,17 +1130,17 @@ impl FrameTransformer {
                 source: point.source,
                 target: target_identity,
                 source_realization: FrameRealization::Known(FrameId::GalileoGtrf23v01),
-                target_realization: FrameRealization::Known(FrameId::Itrf2014),
+                target_realization: FrameRealization::Known(target_id),
                 position_km,
                 velocity_km_s: None,
                 method: FrameMethod::UnboundedApproximate,
                 catalog_version: CATALOG_VERSION,
-                edge_ids: GTRF23_THEN_ITRF2014,
-                edge_info: GTRF23_THEN_ITRF2014_INFO,
+                edge_ids,
+                edge_info,
                 source_basis: point.source_basis,
                 source_evidence: point.source_evidence,
                 assumption: None,
-                position_accuracy_note: Some("CAUTION: GTRF23v01 to ITRF2020 is a zero-offset approximation. ESA's station alignment statistic is not a satellite-position or strict error bound; 2024-05 applicability is inferred from the 2023 effective date and the 2024 ICG update report. The ITRF2020 to ITRF2014 edge is numerical."),
+                position_accuracy_note: Some("CAUTION: GTRF23v01 to ITRF2020 is a zero-offset approximation. ESA's station alignment statistic is not a satellite-position or strict error bound; 2024-05 applicability is inferred from the 2023 effective date and the 2024 ICG update report. Later catalogue edges do not remove this limitation."),
                 velocity_note: Some("cross-frame velocity is not validated"),
             });
         }
@@ -1059,8 +1184,16 @@ impl FrameTransformer {
         if source_id == FrameId::Bdcs2019v01 || target_id == FrameId::Bdcs2019v01 {
             return Err(FrameError::NoPath);
         }
-        if source_id == FrameId::Pz90_11 && target_id == FrameId::Itrf2014 {
-            if !in_pz9011_window(point.epoch) {
+        if source_id == FrameId::Pz90_11
+            && matches!(
+                target_id,
+                FrameId::Itrf2014 | FrameId::Itrf2020 | FrameId::Wgs84G2296
+            )
+        {
+            if !in_pz9011_window(point.epoch)
+                || !in_itrf_window(point.epoch)
+                || (target_id == FrameId::Wgs84G2296 && !in_g2296_window(point.epoch))
+            {
                 return Err(FrameError::OutsideCatalogWindow);
             }
             qualify_path(
@@ -1074,7 +1207,28 @@ impl FrameTransformer {
             if options.require_velocity {
                 return Err(FrameError::VelocityUnavailable);
             }
-            let position_km = pz9011_to_itrf2014_approx(point.position_km);
+            let itrf2014_km = pz9011_to_itrf2014_approx(point.position_km);
+            let (position_km, edge_ids, edge_info, accuracy_note) = match target_id {
+                FrameId::Itrf2014 => (
+                    itrf2014_km,
+                    PZ9011_EDGE,
+                    PZ9011_INFO_PATH,
+                    "CAUTION: ICG-13 PZ-90.11 to ITRF2014 parameters were estimated at 2010.0 from ground stations. Applying them unchanged at this point's epoch is an approximation; the published 0.012 m RMS is not a satellite-position or epoch error bound.",
+                ),
+                FrameId::Itrf2020 => (
+                    itrf2014_to_2020(itrf2014_km, point.epoch),
+                    PZ9011_THEN_ITRF2020,
+                    PZ9011_THEN_ITRF2020_INFO,
+                    "CAUTION: PZ-90.11 to ITRF2014 freezes ground-station parameters estimated at 2010.0; ITRF2014 to ITRF2020 is numerical at the coordinate epoch. The first edge has no satellite-position or later-epoch error bound.",
+                ),
+                FrameId::Wgs84G2296 => (
+                    itrf2014_to_2020(itrf2014_km, point.epoch),
+                    PZ9011_THEN_G2296,
+                    PZ9011_THEN_G2296_INFO,
+                    "CAUTION: PZ-90.11 to ITRF2014 freezes ground-station parameters estimated at 2010.0; ITRF2014 to ITRF2020 and ITRF2020 to WGS84 G2296 are numerical catalogue edges. No strict satellite-position or later-epoch error bound is established for the chain.",
+                ),
+                _ => unreachable!("matched PZ-90.11 target"),
+            };
             if !position_km.iter().all(|v| v.is_finite()) {
                 return Err(FrameError::NonFiniteState);
             }
@@ -1083,17 +1237,17 @@ impl FrameTransformer {
                 source: point.source,
                 target: target_identity,
                 source_realization: FrameRealization::Known(FrameId::Pz90_11),
-                target_realization: FrameRealization::Known(FrameId::Itrf2014),
+                target_realization: FrameRealization::Known(target_id),
                 position_km,
                 velocity_km_s: None,
                 method: FrameMethod::UnboundedApproximate,
                 catalog_version: CATALOG_VERSION,
-                edge_ids: PZ9011_EDGE,
-                edge_info: PZ9011_INFO_PATH,
+                edge_ids,
+                edge_info,
                 source_basis: point.source_basis,
                 source_evidence: point.source_evidence,
                 assumption: None,
-                position_accuracy_note: Some("CAUTION: ICG-13 PZ-90.11 to ITRF2014 parameters were estimated at 2010.0 from ground stations. Applying them unchanged at this point's epoch is an approximation; the published 0.012 m RMS is not a satellite-position or epoch error bound."),
+                position_accuracy_note: Some(accuracy_note),
                 velocity_note: Some("cross-frame velocity is not validated"),
             });
         }
@@ -1128,6 +1282,7 @@ impl FrameTransformer {
             FrameId::Itrf2014 => itrf2014_to_2020(point.position_km, point.epoch),
             FrameId::Pz90_11 => unreachable!("PZ-90.11 paths returned above"),
             FrameId::QzssJgsItrf2014Aligned => unreachable!("QZSS paths returned above"),
+            FrameId::QzssJgsItrf2020Aligned => unreachable!("QZSS paths returned above"),
             FrameId::GalileoGtrf23v01 => unreachable!("Galileo paths returned above"),
             FrameId::Bdcs2019v01 => unreachable!("BeiDou paths returned above"),
         };
@@ -1136,6 +1291,7 @@ impl FrameTransformer {
             FrameId::Itrf2014 => itrf2020_to_2014(itrf2020, point.epoch),
             FrameId::Pz90_11 => unreachable!("PZ-90.11 paths returned above"),
             FrameId::QzssJgsItrf2014Aligned => unreachable!("QZSS paths returned above"),
+            FrameId::QzssJgsItrf2020Aligned => unreachable!("QZSS paths returned above"),
             FrameId::GalileoGtrf23v01 => unreachable!("Galileo paths returned above"),
             FrameId::Bdcs2019v01 => unreachable!("BeiDou paths returned above"),
         };
@@ -1276,6 +1432,19 @@ fn in_qzss_jgs2014_window(epoch: Epoch) -> bool {
         && epoch < Epoch::from_gregorian_utc(2023, 11, 9, 0, 0, 0, 0)
 }
 
+fn in_qzss_jgs2020_window(epoch: Epoch) -> bool {
+    // QZSS lists a change date, not a UTC instant. Start after that date's
+    // work, and limit this catalogue inference to the 2024 case under study.
+    epoch >= Epoch::from_gregorian_utc(2023, 11, 11, 0, 0, 0, 0)
+        && epoch < Epoch::from_gregorian_utc(2025, 1, 1, 0, 0, 0, 0)
+}
+
+fn qzss_jgs2020_resolved(record: Epoch, orbit: Option<Epoch>, evaluation: Epoch) -> bool {
+    in_qzss_jgs2020_window(record)
+        && orbit.is_some_and(in_qzss_jgs2020_window)
+        && in_qzss_jgs2020_window(evaluation)
+}
+
 fn in_gtrf23_sample_window(epoch: Epoch) -> bool {
     // ESA dates the start to 2023-05-05. The 2024 ICG report says another
     // update was still planned. Limit this inferred interval to sample month.
@@ -1363,6 +1532,20 @@ fn itrf2014_to_2020(position_km: [f64; 3], epoch: Epoch) -> [f64; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn qzss_jgs2020_source_requires_all_three_instants_in_conservative_window() {
+        let inside = Epoch::from_gregorian_utc(2024, 5, 10, 0, 0, 0, 0);
+        let first = Epoch::from_gregorian_utc(2023, 11, 11, 0, 0, 0, 0);
+        let last = Epoch::from_gregorian_utc(2024, 12, 31, 23, 59, 59, 0);
+        let before = Epoch::from_gregorian_utc(2023, 11, 10, 23, 59, 59, 0);
+        let after = Epoch::from_gregorian_utc(2025, 1, 1, 0, 0, 0, 0);
+        assert!(qzss_jgs2020_resolved(first, Some(inside), last));
+        assert!(!qzss_jgs2020_resolved(before, Some(inside), inside));
+        assert!(!qzss_jgs2020_resolved(inside, Some(after), inside));
+        assert!(!qzss_jgs2020_resolved(inside, Some(inside), after));
+        assert!(!qzss_jgs2020_resolved(inside, None, inside));
+    }
 
     #[test]
     fn bdcs2019_source_requires_all_three_instants_inside_sample_window() {

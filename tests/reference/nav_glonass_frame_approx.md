@@ -23,7 +23,8 @@ velocity. The conversion does not certify satellite orbit or frame accuracy.
   `Y′ = Y − rz·X + rx·Z + dy`,
   `Z′ = Z + ry·X − rx·Y + dz`.
   No rates or strict later-epoch/satellite-position error bound are supplied.
-  This implementation does not infer an inverse or an ITRF2020 path.
+  A later forward path through ITRF2020 and WGS84 G2296 is documented in
+  `nav_glonass_r02_mixed_frame.md`; it retains this first edge's CAUTION.
 - A direct `SpatialPoint` must assert `Realization(Pz90_11)`; the bare
   `GlonassBroadcastPz90` family remains unresolved. `numerical_only`,
   `warnings_as_errors`, a requested position error bound, and target velocity

@@ -197,16 +197,16 @@ fn asserted_gtrf_uses_same_path_and_rejects_unsupported_requests() {
             .unwrap_err(),
         FrameError::UnknownSourceRealization
     );
-    assert_eq!(
-        FrameTransformer
-            .to_frame(
-                &asserted,
-                FrameRequest::Realization(FrameId::Itrf2020),
-                TransformOptions::default(),
-            )
-            .unwrap_err(),
-        FrameError::NoPath
-    );
+    let direct = FrameTransformer
+        .to_frame(
+            &asserted,
+            FrameRequest::Realization(FrameId::Itrf2020),
+            TransformOptions::default(),
+        )
+        .unwrap();
+    assert_eq!(direct.position_km, native_km);
+    assert_eq!(direct.method, FrameMethod::UnboundedApproximate);
+    assert_eq!(direct.edge_ids.len(), 1);
 }
 
 #[test]

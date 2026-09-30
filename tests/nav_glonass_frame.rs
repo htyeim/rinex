@@ -200,16 +200,15 @@ fn asserted_pz9011_uses_same_edge_and_strict_requests_reject_it() {
             .unwrap_err(),
         FrameError::OutsideCatalogWindow
     );
-    assert_eq!(
-        FrameTransformer
-            .to_frame(
-                &point,
-                FrameRequest::Realization(FrameId::Itrf2020),
-                TransformOptions::default()
-            )
-            .unwrap_err(),
-        FrameError::NoPath
-    );
+    let composed = FrameTransformer
+        .to_frame(
+            &point,
+            FrameRequest::Realization(FrameId::Itrf2020),
+            TransformOptions::default(),
+        )
+        .unwrap();
+    assert_eq!(composed.method, FrameMethod::UnboundedApproximate);
+    assert_eq!(composed.edge_ids.len(), 2);
 }
 
 #[test]
