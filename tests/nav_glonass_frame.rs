@@ -146,7 +146,7 @@ fn asserted_pz9011_uses_same_edge_and_strict_requests_reject_it() {
         ),
         (
             TransformOptions {
-                max_position_error_m: Some(100.0),
+                max_frame_operation_error_m: Some(100.0),
                 ..Default::default()
             },
             FrameError::PositionBoundUnavailable,
@@ -253,12 +253,17 @@ fn nav_record_orbit_reference_and_evaluation_must_be_in_pz9011_window() {
             .unwrap();
         assert_eq!(state.state.realization(), FrameRealization::Unknown);
         assert_eq!(state.state.source_evidence(), None);
+        let result = state
+            .state
+            .to_frame(FrameRequest::Realization(FrameId::Itrf2014))
+            .unwrap();
         assert_eq!(
-            state
-                .state
-                .to_frame(FrameRequest::Realization(FrameId::Itrf2014))
-                .unwrap_err(),
-            FrameError::UnknownSourceRealization
+            result.position_status(),
+            rinex::navigation::rinex::spatial_state::PositionStatus::NominalAssumption
+        );
+        assert_eq!(
+            result.fallback_reason,
+            Some(FrameError::UnknownSourceRealization)
         );
     }
 }

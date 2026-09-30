@@ -13,14 +13,16 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut args = std::env::args().skip(1);
     let file = args
         .next()
-        .ok_or("usage: nav_frame FILE SV EPOCH [--target wgs84|g2296|itrf2020|itrf2014] [--warnings-as-errors]")?;
+        .ok_or("usage: nav_frame FILE SV EPOCH [--target wgs84|g2296|itrf2020|itrf2014] [--warnings-as-errors] [--allow-unknown-health]")?;
     let sv = SV::from_str(&args.next().ok_or("missing SV")?)?;
     let epoch = Epoch::from_str(&args.next().ok_or("missing epoch")?)?;
     let mut strict = false;
+    let mut health_policy = UnknownHealthPolicy::Reject;
     let mut target = FrameRequest::Realization(FrameId::Itrf2014);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--warnings-as-errors" => strict = true,
+            "--allow-unknown-health" => health_policy = UnknownHealthPolicy::Allow,
             "--target" => {
                 target = match args.next().as_deref() {
                     Some("wgs84") => FrameRequest::Wgs84,
@@ -40,7 +42,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     } else {
         Rinex::from_file(&file)?
     };
-    let report = nav.nav_select_ephemeris(sv, epoch, UnknownHealthPolicy::Reject);
+    let report = nav.nav_select_ephemeris(sv, epoch, health_policy);
     let candidate = report.chosen().ok_or_else(|| {
         for candidate in &report.candidates {
             eprintln!(
@@ -54,9 +56,13 @@ fn main() -> Result<(), Box<dyn Error>> {
         "no propagatable supported NAV record"
     })?;
     println!(
-        "selected={} msgtype: {:?}",
-        candidate.key.sv, candidate.key.msgtype
+        "selected={} msgtype={:?} record_epoch={} health_raw={:?} health_interpreted={:?} health_policy={:?}",
+        candidate.key.sv, candidate.key.msgtype, candidate.key.epoch,
+        candidate.ephemeris.orbits.get("health"), candidate.health, health_policy
     );
+    if candidate.health.is_none() {
+        println!("CAUTION: NAV health is unknown and was allowed explicitly; data validity and propagation were checked separately");
+    }
     let native = candidate.spatial_state_at(epoch)?;
     println!(
         "toc={} toe={:?} native_frame={:?} source={:?} source_realization={:?} source_evidence={:?} native_km={:?} request={target:?}",
@@ -87,7 +93,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         result.target_realization, result.source_realization, result.epoch, result.position_km
     );
     println!(
-        "source_basis={:?} source_evidence={:?} position_status={:?} method={:?} catalog={} edges={:?} edge_info={:?} velocity_km_s={:?}",
+        "source_basis={:?} source_evidence={:?} position_status={:?} method={:?} catalog={} edges={:?} edge_info={:?} fallback_reason={:?} velocity_km_s={:?}",
         result.source_basis,
         result.source_evidence,
         result.position_status(),
@@ -95,13 +101,17 @@ fn main() -> Result<(), Box<dyn Error>> {
         result.catalog_version,
         result.edge_ids,
         result.edge_info,
+        result.fallback_reason,
         result.velocity_km_s
     );
-    if let Some(note) = result.position_accuracy_note {
+    for note in result.cautions() {
         println!("{note}");
     }
     if let Some(assumption) = result.assumption {
-        println!("assumption_id={} scope={}", assumption.id, assumption.scope);
+        println!(
+            "assumption_id={} scope={} operation={}",
+            assumption.id, assumption.scope, assumption.operation
+        );
     }
     Ok(())
 }

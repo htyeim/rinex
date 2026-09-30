@@ -39,7 +39,7 @@ fn representative_real_records_keep_selection_propagation_and_frame_errors_disti
     assert_eq!(nav.nav_parse_report().rejected_records(), 0);
     assert_eq!(nav.nav_parse_report().unsupported_records(), 0);
     let t = Epoch::from_str("2024-05-10T03:00:00 GPST").unwrap();
-    for (sv, source, realization, expected) in [
+    for (sv, source, realization, expected_reason) in [
         (
             "G04",
             SourceFrameIdentity::GpsBroadcastWgs84,
@@ -93,8 +93,19 @@ fn representative_real_records_keep_selection_propagation_and_frame_errors_disti
                 PositionStatus::MarkedApproximation
             );
             assert_eq!(result.edge_ids.len(), if sv.prn == 2 { 3 } else { 2 });
-        } else if let Some(err) = expected {
-            assert_eq!(converted.unwrap_err(), err, "{sv}");
+        } else if let Some(reason) = expected_reason {
+            let result = converted.unwrap();
+            assert_eq!(
+                result.position_status(),
+                PositionStatus::NominalAssumption,
+                "{sv}"
+            );
+            assert_eq!(result.fallback_reason, Some(reason), "{sv}");
+            assert_eq!(result.position_km, native.state.position_km);
+            assert!(result
+                .cautions()
+                .iter()
+                .any(|note| note.contains("CAUTION")));
         } else {
             let result = converted.unwrap();
             assert_eq!(result.position_status(), PositionStatus::NativeIdentity);

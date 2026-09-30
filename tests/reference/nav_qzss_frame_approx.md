@@ -29,7 +29,7 @@ not supply translation/rotation parameters, a strict upper bound, or a
 satellite-domain frame error estimate. This edge therefore returns the same
 numeric XYZ in km, while reporting distinct source and target realizations,
 the zero-offset edge ID, `UnboundedApproximate`, and `CAUTION`. Requests for
-`NumericalOnly`, a strict `max_position_error_m`, or cross-frame velocity fail.
+`NumericalOnly`, a strict `max_frame_operation_error_m`, or cross-frame velocity fail.
 `SpatialPoint::new` callers must assert
 `SourceFrameIdentity::Realization(FrameId::QzssJgsItrf2014Aligned)`; a generic
 `QzssBroadcastJgs` point has unresolved realization.

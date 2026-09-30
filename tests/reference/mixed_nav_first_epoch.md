@@ -1,3 +1,5 @@
+> Historical F1/F2 snapshot. For the current F4 diagnostic behavior and validation, see `nav_f4_frame_paths.md`.
+
 # 2024-05-10 mixed NAV first-epoch diagnostic (F1)
 
 Run from this repository root. The fixture is made from the original Septentrio OBS and DLR mixed NAV files named in `tests/fixtures/mixed_2024131_first_epoch_manifest.json`. The manifest records original SHA-256 values, fixture SHA-256 values, original one-based line spans, per-record hashes, and all 56 OBS SV labels. The extractor copies the original header and records as bytes. It does not normalize RINEX field widths, values, or line endings.

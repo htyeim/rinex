@@ -1,3 +1,5 @@
+> Historical F1/F2 snapshot. For the current F4 diagnostic behavior and validation, see `nav_f4_frame_paths.md`.
+
 # Mixed NAV remaining frame decision, 2024-05-10 03:00 GPST
 
 This completes the remaining first-epoch frame unit after F1 and the verified
@@ -48,7 +50,7 @@ edges have no published correction parameters; zero is an explicitly marked
 assumption, not a measured transformation. The existing EPSG and ITRF edges
 retain their documented direction, units, rates and epoch policies in
 `nav_frame_transform.md`. `NumericalOnly`, `warnings_as_errors`, a strict
-`max_position_error_m`, and `require_velocity` each reject the new approximate
+`max_frame_operation_error_m`, and `require_velocity` each reject the new approximate
 chains. The tested date boundaries reject QZSS points outside its new window.
 
 ## Closed source and message units

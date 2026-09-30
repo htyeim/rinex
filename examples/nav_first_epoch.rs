@@ -52,16 +52,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut args = std::env::args().skip(1);
     let obs_path = args
         .next()
-        .ok_or("usage: nav_first_epoch OBS NAV [--compare-nav ORIGINAL_NAV] [--candidates]")?;
+        .ok_or("usage: nav_first_epoch OBS NAV [--compare-nav ORIGINAL_NAV] [--candidates] [--allow-unknown-health]")?;
     let nav_path = args.next().ok_or("missing NAV path")?;
     let mut compare_path = None;
     let mut show_candidates = false;
+    let mut health_policy = UnknownHealthPolicy::Reject;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--compare-nav" if compare_path.is_none() => {
                 compare_path = Some(args.next().ok_or("missing original NAV path")?)
             },
             "--candidates" => show_candidates = true,
+            "--allow-unknown-health" => health_policy = UnknownHealthPolicy::Allow,
             _ => return Err(format!("unexpected argument: {arg}").into()),
         }
     }
@@ -80,7 +82,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err("OBS raw SV labels and decoded signals differ".into());
     }
     let parse_report = nav.nav_parse_report();
-    println!("parse=ok epoch={t} obs_svs={} nav_eph_decoded={} nav_rejected={} nav_unsupported={} policy=Reject target=Wgs84 options=default catalog={}",
+    println!("parse=ok epoch={t} obs_svs={} nav_eph_decoded={} nav_rejected={} nav_unsupported={} policy={health_policy:?} target=Wgs84 options=default catalog={}",
         svs.len(), nav.nav_ephemeris_frames_iter().count(), parse_report.rejected_records(),
         parse_report.unsupported_records(), FrameTransformer.catalog_version());
     if show_candidates {
@@ -92,9 +94,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     let mut changed_at_tx = Vec::new();
     let mut compare_mismatches = Vec::new();
     for (sv, label) in labels {
-        let report = nav.nav_select_ephemeris(sv, t, UnknownHealthPolicy::Reject);
+        let report = nav.nav_select_ephemeris(sv, t, health_policy);
         if let Some(ref full) = original {
-            let full_report = full.nav_select_ephemeris(sv, t, UnknownHealthPolicy::Reject);
+            let full_report = full.nav_select_ephemeris(sv, t, health_policy);
             if selected_key(&report) != selected_key(&full_report) {
                 compare_mismatches.push(format!(
                     "{label}: fixture={:?} original={:?}",
@@ -128,7 +130,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                     candidate.key.msgtype,
                     candidate.clock_reference,
                     candidate.orbit_reference,
-                    candidate.ephemeris.orbits.get("health"),
+                    (candidate.ephemeris.orbits.get("health"), candidate.health),
                     candidate.rejection
                 );
             }
@@ -141,9 +143,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             *totals.entry("selection_none".into()).or_default() += 1;
             continue;
         };
-        let selected = format!("sv={label} msg={:?} record_epoch={} toc={} toe={:?} health={:?} candidates={} rejections={rejections:?}",
+        let selected = format!("sv={label} msg={:?} record_epoch={} toc={} toe={:?} health_raw={:?} health_interpreted={:?} health_caution={:?} candidates={} rejections={rejections:?}",
             chosen.key.msgtype, chosen.key.epoch, chosen.clock_reference, chosen.orbit_reference,
-            chosen.ephemeris.orbits.get("health"), report.candidates.len());
+            chosen.ephemeris.orbits.get("health"), chosen.health,
+            chosen.health.is_none().then_some("CAUTION: unknown NAV health explicitly allowed"),
+            report.candidates.len());
         if let Some(rho_m) = observations
             .signals
             .iter()
@@ -158,7 +162,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             // This is only a reception-minus-pseudorange/c selection sensitivity
             // check. No satellite clock, receiver clock, or atmospheric correction.
             let tx = t - Duration::from_seconds(rho_m / C_M_S);
-            let tx_report = nav.nav_select_ephemeris(sv, tx, UnknownHealthPolicy::Reject);
+            let tx_report = nav.nav_select_ephemeris(sv, tx, health_policy);
             if selected_key(&report) != selected_key(&tx_report) {
                 changed_at_tx.push(format!(
                     "{label}: reception={:?} approximate_tx={:?} dt_s={:.6}",
@@ -192,10 +196,11 @@ fn main() -> Result<(), Box<dyn Error>> {
             Ok(result) => {
                 let status = format!("{:?}", result.position_status());
                 *totals.entry(status.clone()).or_default() += 1;
-                println!("{selected} native_frame={:?} source={:?} realization={:?} source_evidence={:?} native_km={:?} target=Wgs84 target_km={:?} status={status} target_realization={:?} catalog={} edges={:?} edge_info={:?} caution={:?}",
+                println!("{selected} native_frame={:?} source={:?} realization={:?} source_evidence={:?} native_km={:?} target=Wgs84 target_km={:?} status={status} target_realization={:?} catalog={} edges={:?} edge_info={:?} assumption={:?} fallback_reason={:?} cautions={:?}",
                     state.native_frame(), state.source(), state.realization(), state.source_evidence(),
                     state.position_km, result.position_km, result.target_realization,
-                    result.catalog_version, result.edge_ids, result.edge_info, result.position_accuracy_note);
+                    result.catalog_version, result.edge_ids, result.edge_info,
+                    result.assumption.map(|assumption| assumption.id), result.fallback_reason, result.cautions());
             },
             Err(err) => {
                 *totals.entry(format!("FrameError::{err:?}")).or_default() += 1;

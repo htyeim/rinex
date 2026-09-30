@@ -27,7 +27,7 @@ The path uses an explicit zero-offset BDCS(2019v01) → ITRF2014
 without dated rates and full convention. No satellite-position error
 bound is claimed. The result is `UnboundedApproximate`, includes
 `CAUTION`, and has no target-frame velocity. `NumericalOnly`, any strict
-`max_position_error_m`, and `require_velocity` reject. A direct point
+`max_frame_operation_error_m`, and `require_velocity` reject. A direct point
 caller must assert `Realization(FrameId::Bdcs2019v01)`; generic
 `BeidouBroadcast` remains unresolved. This unit opens only real PRN C05
 D2, not every BeiDou GEO PRN.

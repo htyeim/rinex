@@ -24,7 +24,7 @@ without a strict satellite-position error bound. The second step uses the
 published [ITRF2020 Table 2](https://itrf.ign.fr/en/solutions/itrf2020)
 translations, scale and rates to ITRF2014 at the point's own epoch. The
 whole path is `UnboundedApproximate`, carries `CAUTION`, and returns no
-target velocity. `NumericalOnly`, any strict `max_position_error_m`, and
+target velocity. `NumericalOnly`, any strict `max_frame_operation_error_m`, and
 `require_velocity` reject. A direct point caller must assert
 `Realization(FrameId::GalileoGtrf23v01)`; a generic GTRF label is unresolved.
 The older 2022 E08 messages still have unknown realization.

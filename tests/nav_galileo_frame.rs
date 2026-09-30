@@ -163,7 +163,7 @@ fn asserted_gtrf_uses_same_path_and_rejects_unsupported_requests() {
         ),
         (
             TransformOptions {
-                max_position_error_m: Some(100.0),
+                max_frame_operation_error_m: Some(100.0),
                 ..Default::default()
             },
             FrameError::PositionBoundUnavailable,
@@ -237,11 +237,17 @@ fn outside_window_and_older_e08_do_not_claim_gtrf23() {
     let native = candidate.chosen().unwrap().spatial_state_at(t).unwrap();
     assert_eq!(native.key.msgtype, NavMessageType::INAV);
     assert_eq!(native.state.realization(), FrameRealization::Unknown);
+    let result = native
+        .state
+        .to_frame(FrameRequest::Realization(FrameId::Itrf2014))
+        .unwrap();
     assert_eq!(
-        native
-            .state
-            .to_frame(FrameRequest::Realization(FrameId::Itrf2014))
-            .unwrap_err(),
-        FrameError::UnknownSourceRealization
+        result.position_status(),
+        rinex::navigation::rinex::spatial_state::PositionStatus::NominalAssumption
     );
+    assert_eq!(
+        result.fallback_reason,
+        Some(FrameError::UnknownSourceRealization)
+    );
+    assert_eq!(result.source_realization, FrameRealization::Unknown);
 }

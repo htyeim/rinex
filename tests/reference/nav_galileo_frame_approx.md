@@ -22,7 +22,7 @@ day-stamped ESA statement, that GTRF23v01 remained applicable for this
 2024-06-01 00:00:00 UTC (exclusive end). This is a deliberately narrow
 library policy, not the official full validity interval. NAV record, orbit
 reference, and evaluation instants must all be inside it. The older
-2022-06-08 E08 remains unresolved and rejected; FNAV is a separate unit.
+2022-06-08 E08 remains physically unresolved; F4 returns only a marked nominal diagnostic after NAV checks. FNAV is a separate unit.
 
 ESA gives a GTRF-to-ITRF alignment requirement of 3 cm (2σ) for reference
 stations. It publishes no seven-parameter GTRF23v01 → ITRF2020 correction
@@ -32,7 +32,7 @@ The [IERS/IGN ITRF2020 Table 2](https://itrf.ign.fr/en/solutions/itrf2020)
 gives ITRF2020 → ITRF2014 translations in mm, scale in ppb, and rates at
 2015.0; its published parameters are the second, numerical edge. The
 approximate first edge governs the whole path: `NumericalOnly`, any strict
-`max_position_error_m`, and `require_velocity` all fail. Target velocity is
+`max_frame_operation_error_m`, and `require_velocity` all fail. Target velocity is
 unavailable. A direct point caller must assert
 `Realization(FrameId::GalileoGtrf23v01)`; a generic
 `GalileoBroadcastGtrf` point remains unresolved.

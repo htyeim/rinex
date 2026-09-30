@@ -174,7 +174,7 @@ fn published_accuracy_is_not_accepted_as_a_strict_upper_bound() {
                     &point,
                     FrameRequest::Realization(FrameId::Itrf2014),
                     TransformOptions {
-                        max_position_error_m: Some(bound),
+                        max_frame_operation_error_m: Some(bound),
                         ..Default::default()
                     },
                 )
@@ -188,7 +188,7 @@ fn published_accuracy_is_not_accepted_as_a_strict_upper_bound() {
                 &point,
                 FrameRequest::Realization(FrameId::Itrf2014),
                 TransformOptions {
-                    max_position_error_m: Some(f64::NAN),
+                    max_frame_operation_error_m: Some(f64::NAN),
                     ..Default::default()
                 },
             )
@@ -269,7 +269,7 @@ fn unknown_gps_version_and_other_broadcast_sources_fail_closed() {
 }
 
 #[test]
-fn navic_nav_state_cannot_enter_gps_frame_path() {
+fn navic_nav_state_gets_diagnostic_wgs84_without_entering_gps_frame_path() {
     let nav = Rinex::from_file("tests/fixtures/nav_navic_i02_2023071.rnx").unwrap();
     let t = Epoch::from_str("2023-03-12T00:00:00 GPST").unwrap();
     let report =
@@ -279,10 +279,18 @@ fn navic_nav_state_cannot_enter_gps_frame_path() {
         native.state.source(),
         SourceFrameIdentity::NavicBroadcastWgs84
     );
+    let result = native.state.to_frame(FrameRequest::Wgs84).unwrap();
     assert_eq!(
-        native.state.to_frame(FrameRequest::Wgs84).unwrap_err(),
-        FrameError::UnsupportedSource(SourceFrameIdentity::NavicBroadcastWgs84)
+        result.position_status(),
+        rinex::navigation::rinex::spatial_state::PositionStatus::NominalAssumption
     );
+    assert_eq!(
+        result.fallback_reason,
+        Some(FrameError::UnsupportedSource(
+            SourceFrameIdentity::NavicBroadcastWgs84
+        ))
+    );
+    assert_eq!(result.position_km, native.state.position_km);
 }
 
 #[test]

@@ -148,7 +148,7 @@ fn fnav_direct_point_and_strict_requests_follow_the_same_catalogue_edge() {
         ),
         (
             TransformOptions {
-                max_position_error_m: Some(100.0),
+                max_frame_operation_error_m: Some(100.0),
                 ..Default::default()
             },
             FrameError::PositionBoundUnavailable,
@@ -210,11 +210,17 @@ fn older_e08_fnav_stays_unknown() {
     let native = selected.chosen().unwrap().spatial_state_at(epoch).unwrap();
     assert_eq!(native.key.msgtype, NavMessageType::FNAV);
     assert_eq!(native.state.realization(), FrameRealization::Unknown);
+    let result = native
+        .state
+        .to_frame(FrameRequest::Realization(FrameId::Itrf2014))
+        .unwrap();
     assert_eq!(
-        native
-            .state
-            .to_frame(FrameRequest::Realization(FrameId::Itrf2014))
-            .unwrap_err(),
-        FrameError::UnknownSourceRealization
+        result.position_status(),
+        rinex::navigation::rinex::spatial_state::PositionStatus::NominalAssumption
     );
+    assert_eq!(
+        result.fallback_reason,
+        Some(FrameError::UnknownSourceRealization)
+    );
+    assert_eq!(result.source_realization, FrameRealization::Unknown);
 }

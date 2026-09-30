@@ -15,6 +15,7 @@ use std::str::FromStr;
 
 const FIXTURE: &str = "tests/fixtures/nav_navic_i02_2023071.rnx";
 const EXPECTED: &str = include_str!("reference/nav_navic_lnav_expected.json");
+const NAVIC_I02_ASSUMPTION_ID: &str = "rinex:NavIC-I02:unknown-WGS84-to-nominal-ITRF2014:zero-v1";
 
 fn toe() -> Epoch {
     Epoch::from_str("2023-03-12T00:00:00 GPST").unwrap()
@@ -99,7 +100,7 @@ fn strict_and_unsupported_requests_fail_closed() {
         ),
         (
             TransformOptions {
-                max_position_error_m: Some(1_000.0),
+                max_frame_operation_error_m: Some(1_000.0),
                 ..Default::default()
             },
             FrameError::PositionBoundUnavailable,
@@ -133,19 +134,23 @@ fn strict_and_unsupported_requests_fail_closed() {
             .unwrap_err(),
         FrameError::UnsupportedSource(SourceFrameIdentity::NavicBroadcastWgs84)
     );
+    let generic = FrameTransformer
+        .to_frame(&point, FrameRequest::Wgs84, TransformOptions::default())
+        .unwrap();
     assert_eq!(
-        FrameTransformer
-            .to_frame(&point, FrameRequest::Wgs84, TransformOptions::default())
-            .unwrap_err(),
-        FrameError::UnsupportedSource(SourceFrameIdentity::NavicBroadcastWgs84)
+        generic.fallback_reason,
+        Some(FrameError::UnsupportedSource(
+            SourceFrameIdentity::NavicBroadcastWgs84
+        ))
     );
+    assert_ne!(generic.assumption.unwrap().id, NAVIC_I02_ASSUMPTION_ID);
     let mut outside = point;
     outside.epoch += Duration::from_seconds(7200.0);
     assert_eq!(
         FrameTransformer
             .to_frame(&outside, request, TransformOptions::default())
             .unwrap_err(),
-        FrameError::OutsideCatalogWindow
+        FrameError::InconsistentFrame
     );
 }
 
@@ -201,12 +206,16 @@ fn other_real_navic_record_does_not_inherit_i02_assumption() {
         .spatial_state_at(key.epoch)
         .unwrap();
     assert_eq!(state.state.realization(), FrameRealization::Unknown);
+    let result = state
+        .state
+        .to_frame(FrameRequest::Realization(FrameId::Itrf2014))
+        .unwrap();
+    assert_ne!(result.assumption.unwrap().id, NAVIC_I02_ASSUMPTION_ID);
     assert_eq!(
-        state
-            .state
-            .to_frame(FrameRequest::Realization(FrameId::Itrf2014))
-            .unwrap_err(),
-        FrameError::UnsupportedSource(SourceFrameIdentity::NavicBroadcastWgs84)
+        result.fallback_reason,
+        Some(FrameError::UnsupportedSource(
+            SourceFrameIdentity::NavicBroadcastWgs84
+        ))
     );
 }
 
@@ -225,11 +234,15 @@ fn altered_i02_orbit_does_not_inherit_nominal_assumption() {
         UnknownHealthPolicy::Reject,
     );
     let native = report.chosen().unwrap().spatial_state_at(toe()).unwrap();
+    let result = native
+        .state
+        .to_frame(FrameRequest::Realization(FrameId::Itrf2014))
+        .unwrap();
+    assert_ne!(result.assumption.unwrap().id, NAVIC_I02_ASSUMPTION_ID);
     assert_eq!(
-        native
-            .state
-            .to_frame(FrameRequest::Realization(FrameId::Itrf2014))
-            .unwrap_err(),
-        FrameError::UnsupportedSource(SourceFrameIdentity::NavicBroadcastWgs84)
+        result.fallback_reason,
+        Some(FrameError::UnsupportedSource(
+            SourceFrameIdentity::NavicBroadcastWgs84
+        ))
     );
 }

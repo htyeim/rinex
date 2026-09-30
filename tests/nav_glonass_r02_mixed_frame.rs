@@ -144,7 +144,7 @@ fn r02_strict_requests_reject_the_composed_approximation() {
         ),
         (
             TransformOptions {
-                max_position_error_m: Some(1.0),
+                max_frame_operation_error_m: Some(1.0),
                 ..Default::default()
             },
             FrameError::PositionBoundUnavailable,

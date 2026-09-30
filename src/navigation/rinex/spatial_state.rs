@@ -268,7 +268,7 @@ pub enum PositionStatus {
 }
 
 /// A target state. Unknown realization remains explicit rather than inventing Gxxxx.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct FrameResult {
     pub epoch: Epoch,
     pub source: SourceFrameIdentity,
@@ -284,15 +284,17 @@ pub struct FrameResult {
     /// Frozen parameter catalogue; no runtime download or kernel is used.
     pub catalog_version: &'static str,
     /// Ordered parameter/operation IDs that produced the returned position.
-    pub edge_ids: &'static [&'static str],
+    pub edge_ids: Vec<&'static str>,
     /// Ordered per-edge direction, method, provenance, and applicability.
-    pub edge_info: &'static [FrameEdgeInfo],
+    pub edge_info: Vec<FrameEdgeInfo>,
     pub source_basis: SourceBasis,
     /// NAV broadcast realization evidence, separate from the conversion edge.
     /// None for caller-asserted points and unresolved NAV sources.
     pub source_evidence: Option<&'static str>,
     /// Explicit, unverified alignment assumption. Never a known source realization.
     pub assumption: Option<&'static FrameAssumptionInfo>,
+    /// Failure of the evidence-backed route before a nominal fallback.
+    pub fallback_reason: Option<FrameError>,
     /// A published operation accuracy is not a strict position upper bound.
     pub position_accuracy_note: Option<&'static str>,
     pub velocity_note: Option<&'static str>,
@@ -301,8 +303,9 @@ pub struct FrameResult {
 #[derive(Clone, Copy, Debug)]
 pub struct FrameAssumptionInfo {
     pub id: &'static str,
+    /// Supporting source, or empty when the diagnostic policy has no physical relation source.
     pub source_url: &'static str,
-    /// Hash of the reference fixture, not a hash of the caller's runtime file.
+    /// Hash of a reference fixture, or empty. Never a hash of the caller's runtime file.
     pub reference_fixture_sha256: &'static str,
     pub scope: &'static str,
     pub operation: &'static str,
@@ -317,6 +320,10 @@ pub struct FrameEdgeInfo {
     pub method: FrameMethod,
     pub parameter_reference_epoch: &'static str,
     pub valid_window: &'static str,
+    /// Domain permitted by this implementation, independent of published fit data.
+    pub domain: &'static str,
+    /// Cases exercised locally; this does not extend the operation's valid window.
+    pub sample_validation: &'static str,
     pub source_url: &'static str,
     pub position_metric: &'static str,
     pub velocity_capability: &'static str,
@@ -324,8 +331,32 @@ pub struct FrameEdgeInfo {
 
 impl FrameResult {
     /// Inspect every chosen edge without re-running the transformation.
-    pub fn info(&self) -> &'static [FrameEdgeInfo] {
-        self.edge_info
+    pub fn info(&self) -> &[FrameEdgeInfo] {
+        &self.edge_info
+    }
+
+    /// Human-readable cautions, including the specific failed evidenced path.
+    pub fn cautions(&self) -> Vec<String> {
+        let mut notes = Vec::new();
+        if let Some(reason) = self.fallback_reason {
+            notes.push(format!(
+                "CAUTION: evidenced frame route failed with {reason:?}; source={:?}, source_realization={:?}, target={:?}",
+                self.source, self.source_realization, self.target_realization
+            ));
+        }
+        if self.source_basis == SourceBasis::CallerAsserted {
+            notes.push("CAUTION: source identity and ECEF XYZ were asserted by the caller; if treated as a broadcast satellite state, NAV health, data validity, and propagation were not checked".into());
+        }
+        if self.assumption.is_some() && self.source == SourceFrameIdentity::NavicBroadcastWgs84 {
+            notes.push("CAUTION: NavIC IRNSST was represented with a GPST proxy; the physical time-scale difference was not verified".into());
+        }
+        if let Some(note) = self.position_accuracy_note {
+            notes.push(note.into());
+        }
+        if let Some(note) = self.velocity_note {
+            notes.push(format!("CAUTION: {note}"));
+        }
+        notes
     }
 
     /// Inspect this before treating `position_km` as a coordinate in `target`.
@@ -362,8 +393,11 @@ pub enum MethodPolicy {
 #[derive(Clone, Copy, Debug)]
 pub struct TransformOptions {
     pub method: MethodPolicy,
-    pub max_position_error_m: Option<f64>,
+    /// Strict upper bound for the frame operation alone, in metres.
+    pub max_frame_operation_error_m: Option<f64>,
     pub require_velocity: bool,
+    /// Explicitly permit nominal fallback for caller-asserted ECEF points.
+    pub allow_unverified_nominal: bool,
     /// Reject marked approximations and unverified nominal assumptions.
     /// Informational accuracy/velocity notes on numerical paths are retained.
     pub warnings_as_errors: bool,
@@ -373,8 +407,9 @@ impl Default for TransformOptions {
     fn default() -> Self {
         Self {
             method: MethodPolicy::BestAvailable,
-            max_position_error_m: None,
+            max_frame_operation_error_m: None,
             require_velocity: false,
+            allow_unverified_nominal: false,
             warnings_as_errors: false,
         }
     }
@@ -392,6 +427,15 @@ pub struct SpatialPoint {
     realization: FrameRealization,
     source_evidence: Option<&'static str>,
     nominal_sample: Option<NominalSample>,
+    nav_snapshot: Option<NavPointSnapshot>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct NavPointSnapshot {
+    epoch: Epoch,
+    source: SourceFrameIdentity,
+    position_km: [f64; 3],
+    velocity_km_s: Option<[f64; 3]>,
 }
 
 impl SpatialPoint {
@@ -432,6 +476,7 @@ impl SpatialPoint {
             },
             source_evidence: None,
             nominal_sample: None,
+            nav_snapshot: None,
         })
     }
 
@@ -447,6 +492,12 @@ impl SpatialPoint {
         point.realization = state.realization;
         point.source_evidence = state.source_evidence;
         point.nominal_sample = state.nominal_sample;
+        point.nav_snapshot = Some(NavPointSnapshot {
+            epoch: point.epoch,
+            source: point.source,
+            position_km: point.position_km,
+            velocity_km_s: point.velocity_km_s,
+        });
         Ok(point)
     }
 }
@@ -588,7 +639,15 @@ fn nominal_sample_for(
     None
 }
 
-const CATALOG_VERSION: &str = "N09d-mixed-frame-approx-v9";
+const CATALOG_VERSION: &str = "F4-directed-frame-catalog-v1";
+const GENERAL_NOMINAL_ASSUMPTION: FrameAssumptionInfo = FrameAssumptionInfo {
+    id: "rinex:qualified-ECEF-to-requested-frame:nominal-zero-v1",
+    source_url: "",
+    reference_fixture_sha256: "",
+    scope: "finite selected and propagated NAV ECEF; caller-asserted ECEF only with explicit opt-in",
+    operation: "copy native ECEF XYZ directly; target is a diagnostic label, not a physical realization claim",
+    time_note: "coordinate epoch is preserved; source-specific time-scale assumptions remain separate",
+};
 const NAVIC_I02_ASSUMPTION: FrameAssumptionInfo = FrameAssumptionInfo {
     id: "rinex:NavIC-I02:unknown-WGS84-to-nominal-ITRF2014:zero-v1",
     source_url: "https://www.isro.gov.in/media_isro/pdf/Missions/irnss_sps_icd_version1.1-2017.pdf",
@@ -621,27 +680,6 @@ const BDCS2019_TO_ITRF2014: &str = "rinex:BDCS2019v01-ITRF2014:zero-offset-appro
 const G2296_TO_ITRF2020: &str = "EPSG:10608";
 const ITRF2020_TO_ITRF2014: &str = "ITRF2020:Table2:2015.0";
 const NATIVE_EDGES: &[&str] = &[];
-const G2296_EDGE: &[&str] = &[G2296_TO_ITRF2020];
-const G2296_INVERSE_EDGE: &[&str] = &["EPSG:10608:inverse"];
-const ITRF_EDGE: &[&str] = &[ITRF2020_TO_ITRF2014];
-const ITRF_INVERSE_EDGE: &[&str] = &["ITRF2020:Table2:2015.0:inverse"];
-const G2296_THEN_ITRF: &[&str] = &[G2296_TO_ITRF2020, ITRF2020_TO_ITRF2014];
-const ITRF_THEN_G2296: &[&str] = &["ITRF2020:Table2:2015.0:inverse", "EPSG:10608:inverse"];
-const PZ9011_EDGE: &[&str] = &[PZ9011_TO_ITRF2014];
-const PZ9011_THEN_ITRF2020: &[&str] = &[PZ9011_TO_ITRF2014, "ITRF2020:Table2:2015.0:inverse"];
-const PZ9011_THEN_G2296: &[&str] = &[
-    PZ9011_TO_ITRF2014,
-    "ITRF2020:Table2:2015.0:inverse",
-    "EPSG:10608:inverse",
-];
-const QZSS_JGS2014_EDGE: &[&str] = &[QZSS_JGS2014_TO_ITRF2014];
-const QZSS_JGS2020_EDGE: &[&str] = &[QZSS_JGS2020_TO_ITRF2020];
-const QZSS_JGS2020_THEN_ITRF2014: &[&str] = &[QZSS_JGS2020_TO_ITRF2020, ITRF2020_TO_ITRF2014];
-const QZSS_JGS2020_THEN_G2296: &[&str] = &[QZSS_JGS2020_TO_ITRF2020, "EPSG:10608:inverse"];
-const GTRF23_EDGE: &[&str] = &[GTRF23_TO_ITRF2020];
-const GTRF23_THEN_G2296: &[&str] = &[GTRF23_TO_ITRF2020, "EPSG:10608:inverse"];
-const GTRF23_THEN_ITRF2014: &[&str] = &[GTRF23_TO_ITRF2020, ITRF2020_TO_ITRF2014];
-const BDCS2019_EDGE: &[&str] = &[BDCS2019_TO_ITRF2014];
 const G2296_INFO: FrameEdgeInfo = FrameEdgeInfo {
     id: G2296_TO_ITRF2020,
     source: FrameId::Wgs84G2296,
@@ -649,6 +687,8 @@ const G2296_INFO: FrameEdgeInfo = FrameEdgeInfo {
     method: FrameMethod::Helmert,
     parameter_reference_epoch: "2024.0",
     valid_window: "2024-03-04 through 2024-12-31 UTC (catalogue restriction)",
+    domain: "Earth-fixed XYZ; satellite operation bound not established",
+    sample_validation: "2024-05 real GPS and independent numerical reference",
     source_url: "https://epsg.io/10608",
     position_metric: "EPSG operation accuracy 0.01 m at 2024.0; not a strict satellite upper bound",
     velocity_capability: "unvalidated",
@@ -666,6 +706,8 @@ const ITRF_INFO: FrameEdgeInfo = FrameEdgeInfo {
     method: FrameMethod::Helmert,
     parameter_reference_epoch: "2015.0",
     valid_window: "2015-01-01 through 2026-12-31 UTC (catalogue restriction)",
+    domain: "Earth-fixed XYZ; satellite operation bound not established",
+    sample_validation: "2024-05 numerical and reverse-path reference",
     source_url: "https://itrf.ign.fr/en/solutions/itrf2020",
     position_metric: "published parameter uncertainties; no strict satellite upper bound",
     velocity_capability: "rates published; target velocity unvalidated",
@@ -684,6 +726,8 @@ const PZ9011_INFO: FrameEdgeInfo = FrameEdgeInfo {
     parameter_reference_epoch: "2010.0; parameters frozen at later coordinate epochs",
     valid_window:
         "2014-01-15 through 2024-12-31 UTC (library approximation window, not publication validity)",
+    domain: "Earth-fixed XYZ; satellite positions are marked approximate",
+    sample_validation: "2024-05 GLONASS R02 real fixture and independent arithmetic",
     source_url: "https://www.unoosa.org/documents/pdf/icg/2018/icg13/wgd/wgd_24.pdf",
     position_metric: "2010.0 ground-station fit RMS 0.012 m; no satellite or epoch error bound",
     velocity_capability: "not established",
@@ -695,6 +739,8 @@ const QZSS_JGS2014_INFO: FrameEdgeInfo = FrameEdgeInfo {
     method: FrameMethod::UnboundedApproximate,
     parameter_reference_epoch: "none; zero-offset approximation of documented ITRF2014 alignment",
     valid_window: "2021-02-16 through 2023-11-08 UTC (conservative library window)",
+    domain: "Earth-fixed XYZ; JGS broadcast alignment approximation",
+    sample_validation: "2023-03 J02 real fixture",
     source_url: "https://qzss.go.jp/en/technical/dod/pnt/coordinate-system.html",
     position_metric:
         "PNT monitor-station offset within 0.02 m (95%); no satellite or strict upper bound",
@@ -707,6 +753,8 @@ const QZSS_JGS2020_INFO: FrameEdgeInfo = FrameEdgeInfo {
     method: FrameMethod::UnboundedApproximate,
     parameter_reference_epoch: "none; zero-offset approximation of documented ITRF2020 alignment",
     valid_window: "2023-11-11 through 2024-12-31 UTC (conservative library window)",
+    domain: "Earth-fixed XYZ; JGS broadcast alignment approximation",
+    sample_validation: "2024-05 caller-asserted JGS point; J04 NAV unselected",
     source_url: "https://qzss.go.jp/en/technical/dod/pnt/coordinate-system.html",
     position_metric:
         "PNT monitor-station offset within 0.02 m (95%); no satellite or strict upper bound",
@@ -719,6 +767,8 @@ const GTRF23_INFO: FrameEdgeInfo = FrameEdgeInfo {
     method: FrameMethod::UnboundedApproximate,
     parameter_reference_epoch: "none; zero-offset approximation of GTRF23v01 alignment",
     valid_window: "2024-05-01 through 2024-05-31 UTC (narrow library inference window)",
+    domain: "Earth-fixed XYZ; GTRF broadcast alignment approximation",
+    sample_validation: "2024-05 E03 real fixture",
     source_url: "https://navigation-office.esa.int/attachments/32835744/1/GTRF_IGS_Stop_6.pdf",
     position_metric: "GTRF station alignment <0.03 m (2 sigma); no satellite or strict upper bound",
     velocity_capability: "not established",
@@ -730,30 +780,13 @@ const BDCS2019_INFO: FrameEdgeInfo = FrameEdgeInfo {
     method: FrameMethod::UnboundedApproximate,
     parameter_reference_epoch: "2019v01 alignment; zero-offset approximation, no dated rates",
     valid_window: "2022-06-01 through 2022-06-30 UTC (narrow library inference window)",
+    domain: "Earth-fixed XYZ; dated BDCS broadcast inference",
+    sample_validation: "2022-06 C05/C10/C20 real fixtures",
     source_url: "https://files.igs.org/pub/resource/pubs/workshop/2022/TourdelIGS4_05_Hu.pdf",
     position_metric: "2019 station alignment, not a satellite or 2022 strict error bound",
     velocity_capability: "not established",
 };
 const NATIVE_INFO: &[FrameEdgeInfo] = &[];
-const G2296_INFO_PATH: &[FrameEdgeInfo] = &[G2296_INFO];
-const G2296_INVERSE_INFO_PATH: &[FrameEdgeInfo] = &[G2296_INVERSE_INFO];
-const ITRF_INFO_PATH: &[FrameEdgeInfo] = &[ITRF_INFO];
-const ITRF_INVERSE_INFO_PATH: &[FrameEdgeInfo] = &[ITRF_INVERSE_INFO];
-const G2296_THEN_ITRF_INFO: &[FrameEdgeInfo] = &[G2296_INFO, ITRF_INFO];
-const ITRF_THEN_G2296_INFO: &[FrameEdgeInfo] = &[ITRF_INVERSE_INFO, G2296_INVERSE_INFO];
-const PZ9011_INFO_PATH: &[FrameEdgeInfo] = &[PZ9011_INFO];
-const PZ9011_THEN_ITRF2020_INFO: &[FrameEdgeInfo] = &[PZ9011_INFO, ITRF_INVERSE_INFO];
-const PZ9011_THEN_G2296_INFO: &[FrameEdgeInfo] =
-    &[PZ9011_INFO, ITRF_INVERSE_INFO, G2296_INVERSE_INFO];
-const QZSS_JGS2014_INFO_PATH: &[FrameEdgeInfo] = &[QZSS_JGS2014_INFO];
-const QZSS_JGS2020_INFO_PATH: &[FrameEdgeInfo] = &[QZSS_JGS2020_INFO];
-const QZSS_JGS2020_THEN_ITRF2014_INFO: &[FrameEdgeInfo] = &[QZSS_JGS2020_INFO, ITRF_INFO];
-const QZSS_JGS2020_THEN_G2296_INFO: &[FrameEdgeInfo] = &[QZSS_JGS2020_INFO, G2296_INVERSE_INFO];
-const GTRF23_INFO_PATH: &[FrameEdgeInfo] = &[GTRF23_INFO];
-const GTRF23_THEN_G2296_INFO: &[FrameEdgeInfo] = &[GTRF23_INFO, G2296_INVERSE_INFO];
-const GTRF23_THEN_ITRF2014_INFO: &[FrameEdgeInfo] = &[GTRF23_INFO, ITRF_INFO];
-const BDCS2019_INFO_PATH: &[FrameEdgeInfo] = &[BDCS2019_INFO];
-
 /// Fixed, offline, narrowly dated terrestrial-frame parameter catalogue.
 /// It uses no ANISE frame or kernel: these GNSS realizations are not ANISE frames.
 #[derive(Clone, Copy, Debug, Default)]
@@ -775,7 +808,23 @@ impl FrameTransformer {
         request: FrameRequest,
         options: TransformOptions,
     ) -> Result<FrameResult, FrameError> {
-        let result = self.to_frame_inner(point, request, options)?;
+        if point.source_basis == SourceBasis::NavMessageAndCatalogDate
+            && !point.nav_snapshot.is_some_and(|snapshot| {
+                snapshot.epoch == point.epoch
+                    && snapshot.source == point.source
+                    && snapshot.position_km == point.position_km
+                    && snapshot.velocity_km_s == point.velocity_km_s
+            })
+        {
+            return Err(FrameError::InconsistentFrame);
+        }
+        let result = match self.to_frame_inner(point, request, options) {
+            Ok(result) => result,
+            Err(reason) if nominal_fallback_allowed(point, reason, options) => {
+                nominal_result(point, request, reason, options)?
+            },
+            Err(reason) => return Err(reason),
+        };
         if options.warnings_as_errors
             && matches!(
                 result.position_status(),
@@ -806,7 +855,7 @@ impl FrameTransformer {
         {
             return Err(FrameError::NonFiniteState);
         }
-        if let Some(limit) = options.max_position_error_m {
+        if let Some(limit) = options.max_frame_operation_error_m {
             if !limit.is_finite() || limit < 0.0 {
                 return Err(FrameError::InvalidPositionBound);
             }
@@ -849,11 +898,12 @@ impl FrameTransformer {
                 velocity_km_s: None,
                 method: FrameMethod::UnboundedApproximate,
                 catalog_version: CATALOG_VERSION,
-                edge_ids: NATIVE_EDGES,
-                edge_info: NATIVE_INFO,
+                edge_ids: NATIVE_EDGES.to_vec(),
+                edge_info: NATIVE_INFO.to_vec(),
                 source_basis: point.source_basis,
                 source_evidence: None,
                 assumption: Some(&NAVIC_I02_ASSUMPTION),
+                fallback_reason: None,
                 position_accuracy_note: Some("CAUTION: nominal ITRF2014 XYZ copies NavIC I02 native WGS84-family XYZ under an unverified zero-offset assumption; source realization and physical frame accuracy are unknown; no strict position-error bound"),
                 velocity_note: Some("cross-frame velocity is not validated; IRNSST uses a GPST proxy"),
             });
@@ -896,11 +946,12 @@ impl FrameTransformer {
                 velocity_km_s: None,
                 method: FrameMethod::UnboundedApproximate,
                 catalog_version: CATALOG_VERSION,
-                edge_ids: NATIVE_EDGES,
-                edge_info: NATIVE_INFO,
+                edge_ids: NATIVE_EDGES.to_vec(),
+                edge_info: NATIVE_INFO.to_vec(),
                 source_basis: point.source_basis,
                 source_evidence: None,
                 assumption: Some(&SBAS_S27_ASSUMPTION),
+                fallback_reason: None,
                 position_accuracy_note: Some("CAUTION: nominal ITRF2014 XYZ copies GAGAN S27 native WGS84-family XYZ under an unverified zero-offset assumption; source realization and physical frame accuracy are unknown; no strict position-error bound"),
                 velocity_note: Some("cross-frame velocity is not validated"),
             });
@@ -987,287 +1038,17 @@ impl FrameTransformer {
                 options,
             );
         }
-        if source_id == FrameId::QzssJgsItrf2014Aligned && target_id == FrameId::Itrf2014 {
-            if !in_qzss_jgs2014_window(point.epoch) {
-                return Err(FrameError::OutsideCatalogWindow);
-            }
-            qualify_path(
-                PathEvidence {
-                    method: FrameMethod::UnboundedApproximate,
-                    domain: PathDomain::AnyEarthFixed,
-                },
-                point,
-                options,
-            )?;
-            if options.require_velocity {
-                return Err(FrameError::VelocityUnavailable);
-            }
-            // The official source documents alignment, not a seven-parameter
-            // correction. Keep zero correction visibly approximate.
-            return Ok(FrameResult {
-                epoch: point.epoch,
-                source: point.source,
-                target: target_identity,
-                source_realization: FrameRealization::Known(FrameId::QzssJgsItrf2014Aligned),
-                target_realization: FrameRealization::Known(FrameId::Itrf2014),
-                position_km: point.position_km,
-                velocity_km_s: None,
-                method: FrameMethod::UnboundedApproximate,
-                catalog_version: CATALOG_VERSION,
-                edge_ids: QZSS_JGS2014_EDGE,
-                edge_info: QZSS_JGS2014_INFO_PATH,
-                source_basis: point.source_basis,
-                source_evidence: point.source_evidence,
-                assumption: None,
-                position_accuracy_note: Some("CAUTION: QZSS PNT JGS was aligned to ITRF2014 in this period. This zero-offset position approximation is not an exact frame identity; the published 0.02 m (95%) monitor-station alignment is not a satellite-position or strict error bound."),
-                velocity_note: Some("cross-frame velocity is not validated"),
-            });
-        }
-        if source_id == FrameId::QzssJgsItrf2014Aligned
-            || target_id == FrameId::QzssJgsItrf2014Aligned
-        {
-            return Err(FrameError::NoPath);
-        }
-        if source_id == FrameId::QzssJgsItrf2020Aligned
-            && matches!(
-                target_id,
-                FrameId::Itrf2020 | FrameId::Itrf2014 | FrameId::Wgs84G2296
-            )
-        {
-            if !in_qzss_jgs2020_window(point.epoch)
-                || (target_id == FrameId::Itrf2014 && !in_itrf_window(point.epoch))
-                || (target_id == FrameId::Wgs84G2296 && !in_g2296_window(point.epoch))
-            {
-                return Err(FrameError::OutsideCatalogWindow);
-            }
-            qualify_path(
-                PathEvidence {
-                    method: FrameMethod::UnboundedApproximate,
-                    domain: PathDomain::AnyEarthFixed,
-                },
-                point,
-                options,
-            )?;
-            if options.require_velocity {
-                return Err(FrameError::VelocityUnavailable);
-            }
-            let (position_km, edge_ids, edge_info) = match target_id {
-                FrameId::Itrf2020 => (point.position_km, QZSS_JGS2020_EDGE, QZSS_JGS2020_INFO_PATH),
-                FrameId::Itrf2014 => (
-                    itrf2020_to_2014(point.position_km, point.epoch),
-                    QZSS_JGS2020_THEN_ITRF2014,
-                    QZSS_JGS2020_THEN_ITRF2014_INFO,
-                ),
-                FrameId::Wgs84G2296 => (
-                    point.position_km,
-                    QZSS_JGS2020_THEN_G2296,
-                    QZSS_JGS2020_THEN_G2296_INFO,
-                ),
-                _ => unreachable!(),
-            };
-            if !position_km.iter().all(|v| v.is_finite()) {
-                return Err(FrameError::NonFiniteState);
-            }
-            return Ok(FrameResult {
-                epoch: point.epoch, source: point.source, target: target_identity,
-                source_realization: FrameRealization::Known(FrameId::QzssJgsItrf2020Aligned),
-                target_realization: FrameRealization::Known(target_id), position_km,
-                velocity_km_s: None, method: FrameMethod::UnboundedApproximate,
-                catalog_version: CATALOG_VERSION, edge_ids, edge_info,
-                source_basis: point.source_basis, source_evidence: point.source_evidence,
-                assumption: None,
-                position_accuracy_note: Some("CAUTION: QZSS PNT JGS applies ITRF2020 in this period. The JGS-to-ITRF2020 zero-offset approximation has no satellite-position or strict error bound; later catalogue edges do not remove that limitation."),
-                velocity_note: Some("cross-frame velocity is not validated"),
-            });
-        }
-        if source_id == FrameId::QzssJgsItrf2020Aligned
-            || target_id == FrameId::QzssJgsItrf2020Aligned
-        {
-            return Err(FrameError::NoPath);
-        }
-        if source_id == FrameId::GalileoGtrf23v01
-            && matches!(
-                target_id,
-                FrameId::Itrf2020 | FrameId::Itrf2014 | FrameId::Wgs84G2296
-            )
-        {
-            if !in_gtrf23_sample_window(point.epoch)
-                || (target_id == FrameId::Itrf2014 && !in_itrf_window(point.epoch))
-                || (target_id == FrameId::Wgs84G2296 && !in_g2296_window(point.epoch))
-            {
-                return Err(FrameError::OutsideCatalogWindow);
-            }
-            qualify_path(
-                PathEvidence {
-                    method: FrameMethod::UnboundedApproximate,
-                    domain: PathDomain::AnyEarthFixed,
-                },
-                point,
-                options,
-            )?;
-            if options.require_velocity {
-                return Err(FrameError::VelocityUnavailable);
-            }
-            // The first edge has no published offset parameters. Optional
-            // later numerical edges use their own dated catalogue entries.
-            let (position_km, edge_ids, edge_info) = match target_id {
-                FrameId::Itrf2020 => (point.position_km, GTRF23_EDGE, GTRF23_INFO_PATH),
-                FrameId::Itrf2014 => (
-                    itrf2020_to_2014(point.position_km, point.epoch),
-                    GTRF23_THEN_ITRF2014,
-                    GTRF23_THEN_ITRF2014_INFO,
-                ),
-                FrameId::Wgs84G2296 => {
-                    (point.position_km, GTRF23_THEN_G2296, GTRF23_THEN_G2296_INFO)
-                },
-                _ => unreachable!(),
-            };
-            if !position_km.iter().all(|v| v.is_finite()) {
-                return Err(FrameError::NonFiniteState);
-            }
-            return Ok(FrameResult {
-                epoch: point.epoch,
-                source: point.source,
-                target: target_identity,
-                source_realization: FrameRealization::Known(FrameId::GalileoGtrf23v01),
-                target_realization: FrameRealization::Known(target_id),
-                position_km,
-                velocity_km_s: None,
-                method: FrameMethod::UnboundedApproximate,
-                catalog_version: CATALOG_VERSION,
-                edge_ids,
-                edge_info,
-                source_basis: point.source_basis,
-                source_evidence: point.source_evidence,
-                assumption: None,
-                position_accuracy_note: Some("CAUTION: GTRF23v01 to ITRF2020 is a zero-offset approximation. ESA's station alignment statistic is not a satellite-position or strict error bound; 2024-05 applicability is inferred from the 2023 effective date and the 2024 ICG update report. Later catalogue edges do not remove this limitation."),
-                velocity_note: Some("cross-frame velocity is not validated"),
-            });
-        }
-        if source_id == FrameId::GalileoGtrf23v01 || target_id == FrameId::GalileoGtrf23v01 {
-            return Err(FrameError::NoPath);
-        }
-        if source_id == FrameId::Bdcs2019v01 && target_id == FrameId::Itrf2014 {
-            if !in_bdcs2019_sample_window(point.epoch) {
-                return Err(FrameError::OutsideCatalogWindow);
-            }
-            qualify_path(
-                PathEvidence {
-                    method: FrameMethod::UnboundedApproximate,
-                    domain: PathDomain::AnyEarthFixed,
-                },
-                point,
-                options,
-            )?;
-            if options.require_velocity {
-                return Err(FrameError::VelocityUnavailable);
-            }
-            return Ok(FrameResult {
-                epoch: point.epoch,
-                source: point.source,
-                target: target_identity,
-                source_realization: FrameRealization::Known(FrameId::Bdcs2019v01),
-                target_realization: FrameRealization::Known(FrameId::Itrf2014),
-                position_km: point.position_km,
-                velocity_km_s: None,
-                method: FrameMethod::UnboundedApproximate,
-                catalog_version: CATALOG_VERSION,
-                edge_ids: BDCS2019_EDGE,
-                edge_info: BDCS2019_INFO_PATH,
-                source_basis: point.source_basis,
-                source_evidence: point.source_evidence,
-                assumption: None,
-                position_accuracy_note: Some("CAUTION: BDCS(2019v01) to ITRF2014 uses a zero-offset approximation. Its applicability to this 2022 broadcast is inferred from 2022 IGS material, not a day-specific provider certificate. Published station alignment is not a satellite-position or strict 2022 error bound."),
-                velocity_note: Some("cross-frame velocity is not validated"),
-            });
-        }
-        if source_id == FrameId::Bdcs2019v01 || target_id == FrameId::Bdcs2019v01 {
-            return Err(FrameError::NoPath);
-        }
-        if source_id == FrameId::Pz90_11
-            && matches!(
-                target_id,
-                FrameId::Itrf2014 | FrameId::Itrf2020 | FrameId::Wgs84G2296
-            )
-        {
-            if !in_pz9011_window(point.epoch)
-                || !in_itrf_window(point.epoch)
-                || (target_id == FrameId::Wgs84G2296 && !in_g2296_window(point.epoch))
-            {
-                return Err(FrameError::OutsideCatalogWindow);
-            }
-            qualify_path(
-                PathEvidence {
-                    method: FrameMethod::UnboundedApproximate,
-                    domain: PathDomain::AnyEarthFixed,
-                },
-                point,
-                options,
-            )?;
-            if options.require_velocity {
-                return Err(FrameError::VelocityUnavailable);
-            }
-            let itrf2014_km = pz9011_to_itrf2014_approx(point.position_km);
-            let (position_km, edge_ids, edge_info, accuracy_note) = match target_id {
-                FrameId::Itrf2014 => (
-                    itrf2014_km,
-                    PZ9011_EDGE,
-                    PZ9011_INFO_PATH,
-                    "CAUTION: ICG-13 PZ-90.11 to ITRF2014 parameters were estimated at 2010.0 from ground stations. Applying them unchanged at this point's epoch is an approximation; the published 0.012 m RMS is not a satellite-position or epoch error bound.",
-                ),
-                FrameId::Itrf2020 => (
-                    itrf2014_to_2020(itrf2014_km, point.epoch),
-                    PZ9011_THEN_ITRF2020,
-                    PZ9011_THEN_ITRF2020_INFO,
-                    "CAUTION: PZ-90.11 to ITRF2014 freezes ground-station parameters estimated at 2010.0; ITRF2014 to ITRF2020 is numerical at the coordinate epoch. The first edge has no satellite-position or later-epoch error bound.",
-                ),
-                FrameId::Wgs84G2296 => (
-                    itrf2014_to_2020(itrf2014_km, point.epoch),
-                    PZ9011_THEN_G2296,
-                    PZ9011_THEN_G2296_INFO,
-                    "CAUTION: PZ-90.11 to ITRF2014 freezes ground-station parameters estimated at 2010.0; ITRF2014 to ITRF2020 and ITRF2020 to WGS84 G2296 are numerical catalogue edges. No strict satellite-position or later-epoch error bound is established for the chain.",
-                ),
-                _ => unreachable!("matched PZ-90.11 target"),
-            };
-            if !position_km.iter().all(|v| v.is_finite()) {
-                return Err(FrameError::NonFiniteState);
-            }
-            return Ok(FrameResult {
-                epoch: point.epoch,
-                source: point.source,
-                target: target_identity,
-                source_realization: FrameRealization::Known(FrameId::Pz90_11),
-                target_realization: FrameRealization::Known(target_id),
-                position_km,
-                velocity_km_s: None,
-                method: FrameMethod::UnboundedApproximate,
-                catalog_version: CATALOG_VERSION,
-                edge_ids,
-                edge_info,
-                source_basis: point.source_basis,
-                source_evidence: point.source_evidence,
-                assumption: None,
-                position_accuracy_note: Some(accuracy_note),
-                velocity_note: Some("cross-frame velocity is not validated"),
-            });
-        }
-        if source_id == FrameId::Pz90_11 || target_id == FrameId::Pz90_11 {
-            return Err(FrameError::NoPath);
-        }
-        if (source_id == FrameId::Wgs84G2296 || target_id == FrameId::Wgs84G2296)
-            && !in_g2296_window(point.epoch)
-        {
-            return Err(FrameError::OutsideCatalogWindow);
-        }
-        if !in_itrf_window(point.epoch) {
-            return Err(FrameError::OutsideCatalogWindow);
-        }
-        // The older GPS and ITRF catalogue edges are numerical.
-        // Published operation accuracy and parameter uncertainty are not a
-        // proven worst-case satellite-position bound.
+        let path = find_catalog_path(source_id, target_id, point.epoch)?;
+        let approximate = path
+            .iter()
+            .any(|edge| edge.method == FrameMethod::UnboundedApproximate);
         qualify_path(
             PathEvidence {
-                method: FrameMethod::Helmert,
+                method: if approximate {
+                    FrameMethod::UnboundedApproximate
+                } else {
+                    FrameMethod::Helmert
+                },
                 domain: PathDomain::AnyEarthFixed,
             },
             point,
@@ -1276,38 +1057,28 @@ impl FrameTransformer {
         if options.require_velocity {
             return Err(FrameError::VelocityUnavailable);
         }
-
-        let itrf2020 = match source_id {
-            FrameId::Wgs84G2296 | FrameId::Itrf2020 => point.position_km,
-            FrameId::Itrf2014 => itrf2014_to_2020(point.position_km, point.epoch),
-            FrameId::Pz90_11 => unreachable!("PZ-90.11 paths returned above"),
-            FrameId::QzssJgsItrf2014Aligned => unreachable!("QZSS paths returned above"),
-            FrameId::QzssJgsItrf2020Aligned => unreachable!("QZSS paths returned above"),
-            FrameId::GalileoGtrf23v01 => unreachable!("Galileo paths returned above"),
-            FrameId::Bdcs2019v01 => unreachable!("BeiDou paths returned above"),
-        };
-        let position_km = match target_id {
-            FrameId::Wgs84G2296 | FrameId::Itrf2020 => itrf2020,
-            FrameId::Itrf2014 => itrf2020_to_2014(itrf2020, point.epoch),
-            FrameId::Pz90_11 => unreachable!("PZ-90.11 paths returned above"),
-            FrameId::QzssJgsItrf2014Aligned => unreachable!("QZSS paths returned above"),
-            FrameId::QzssJgsItrf2020Aligned => unreachable!("QZSS paths returned above"),
-            FrameId::GalileoGtrf23v01 => unreachable!("Galileo paths returned above"),
-            FrameId::Bdcs2019v01 => unreachable!("BeiDou paths returned above"),
-        };
-        if !position_km.iter().all(|v| v.is_finite()) {
-            return Err(FrameError::NonFiniteState);
+        let mut position_km = point.position_km;
+        for edge in &path {
+            position_km = apply_catalog_edge(edge.id, position_km, point.epoch);
+            if !position_km.iter().all(|v| v.is_finite()) {
+                return Err(FrameError::NonFiniteState);
+            }
         }
-        let (edge_ids, edge_info) = match (source_id, target_id) {
-            (FrameId::Wgs84G2296, FrameId::Itrf2020) => (G2296_EDGE, G2296_INFO_PATH),
-            (FrameId::Itrf2020, FrameId::Wgs84G2296) => {
-                (G2296_INVERSE_EDGE, G2296_INVERSE_INFO_PATH)
-            },
-            (FrameId::Itrf2020, FrameId::Itrf2014) => (ITRF_EDGE, ITRF_INFO_PATH),
-            (FrameId::Itrf2014, FrameId::Itrf2020) => (ITRF_INVERSE_EDGE, ITRF_INVERSE_INFO_PATH),
-            (FrameId::Wgs84G2296, FrameId::Itrf2014) => (G2296_THEN_ITRF, G2296_THEN_ITRF_INFO),
-            (FrameId::Itrf2014, FrameId::Wgs84G2296) => (ITRF_THEN_G2296, ITRF_THEN_G2296_INFO),
-            _ => return Err(FrameError::NoPath),
+        let note = if approximate {
+            match path[0].source {
+                FrameId::Pz90_11 => "CAUTION: PZ-90.11 parameters estimated at 2010.0 are frozen at this coordinate epoch; no strict frame-operation error bound for a satellite position is established. Later numerical edges do not remove this limitation.",
+                FrameId::QzssJgsItrf2014Aligned | FrameId::QzssJgsItrf2020Aligned => "CAUTION: QZSS JGS alignment uses a zero-offset approximation; published monitor-station alignment is not a strict frame-operation error bound for a satellite position. Later numerical edges do not remove this limitation.",
+                FrameId::GalileoGtrf23v01 => "CAUTION: GTRF23v01 alignment uses a zero-offset approximation; ESA station statistics are not a strict frame-operation error bound for a satellite position. Later numerical edges do not remove this limitation.",
+                FrameId::Bdcs2019v01 => "CAUTION: BDCS(2019v01) alignment uses a zero-offset approximation inferred for the dated 2022 sample; station alignment is not a strict frame-operation error bound for a satellite position.",
+                _ => "CAUTION: this frame path includes an approximation without a strict satellite-position error bound.",
+            }
+        } else if path
+            .iter()
+            .any(|edge| edge.source == FrameId::Wgs84G2296 || edge.target == FrameId::Wgs84G2296)
+        {
+            "EPSG:10608 operation accuracy and ITRF parameter uncertainties are not strict frame-operation upper bounds for a satellite position."
+        } else {
+            "ITRF2020 Table 2 parameter uncertainties are not a strict frame-operation upper bound for a satellite position."
         };
         Ok(FrameResult {
             epoch: point.epoch,
@@ -1317,29 +1088,184 @@ impl FrameTransformer {
             target_realization: FrameRealization::Known(target_id),
             position_km,
             velocity_km_s: None,
-            method: if edge_ids.len() == 1 {
+            method: if approximate {
+                FrameMethod::UnboundedApproximate
+            } else if path.len() == 1 {
                 FrameMethod::Helmert
             } else {
                 FrameMethod::Composite
             },
             catalog_version: CATALOG_VERSION,
-            edge_ids,
-            edge_info,
+            edge_ids: path.iter().map(|edge| edge.id).collect(),
+            edge_info: path,
             source_basis: point.source_basis,
             source_evidence: point.source_evidence,
             assumption: None,
-            position_accuracy_note: Some(
-                if edge_info.iter().any(|edge| {
-                    edge.source == FrameId::Wgs84G2296 || edge.target == FrameId::Wgs84G2296
-                }) {
-                    "EPSG:10608 operation accuracy is 0.01 m at 2024.0; ITRF2020 Table 2 gives parameter uncertainties when used. Neither is a satellite-position upper bound."
-                } else {
-                    "ITRF2020 Table 2 parameter uncertainties are not a satellite-position upper bound."
-                },
-            ),
-            velocity_note: Some("cross-frame velocity has no independent chain validation"),
+            fallback_reason: None,
+            position_accuracy_note: Some(note),
+            velocity_note: Some("cross-frame velocity is not validated"),
         })
     }
+}
+
+/// Installed directed operations. Reverse approximate edges require separate evidence.
+const CATALOG_EDGES: &[FrameEdgeInfo] = &[
+    G2296_INFO,
+    G2296_INVERSE_INFO,
+    ITRF_INFO,
+    ITRF_INVERSE_INFO,
+    PZ9011_INFO,
+    QZSS_JGS2014_INFO,
+    QZSS_JGS2020_INFO,
+    GTRF23_INFO,
+    BDCS2019_INFO,
+];
+
+fn edge_window(edge: FrameEdgeInfo, epoch: Epoch) -> bool {
+    match edge.id {
+        G2296_TO_ITRF2020 | "EPSG:10608:inverse" => in_g2296_window(epoch),
+        ITRF2020_TO_ITRF2014 | "ITRF2020:Table2:2015.0:inverse" => in_itrf_window(epoch),
+        PZ9011_TO_ITRF2014 => in_pz9011_window(epoch) && in_itrf_window(epoch),
+        QZSS_JGS2014_TO_ITRF2014 => in_qzss_jgs2014_window(epoch),
+        QZSS_JGS2020_TO_ITRF2020 => in_qzss_jgs2020_window(epoch),
+        GTRF23_TO_ITRF2020 => in_gtrf23_sample_window(epoch),
+        BDCS2019_TO_ITRF2014 => in_bdcs2019_sample_window(epoch),
+        _ => false,
+    }
+}
+
+fn catalog_paths(
+    source: FrameId,
+    target: FrameId,
+    epoch: Epoch,
+    dated: bool,
+) -> Vec<Vec<FrameEdgeInfo>> {
+    let mut pending = vec![Vec::<FrameEdgeInfo>::new()];
+    let mut found = Vec::new();
+    while let Some(path) = pending.pop() {
+        let current = path.last().map_or(source, |edge| edge.target);
+        for edge in CATALOG_EDGES.iter().copied() {
+            if edge.source != current || (dated && !edge_window(edge, epoch)) {
+                continue;
+            }
+            if edge.target == source || path.iter().any(|prior| prior.source == edge.target) {
+                continue;
+            }
+            let mut next = path.clone();
+            next.push(edge);
+            if edge.target == target {
+                found.push(next);
+            } else if next.len() < 8 {
+                pending.push(next);
+            }
+        }
+    }
+    found.sort_by_key(|path| {
+        (
+            path.iter()
+                .any(|edge| edge.method == FrameMethod::UnboundedApproximate),
+            path.len(),
+            path.iter()
+                .map(|edge| edge.id)
+                .collect::<Vec<_>>()
+                .join("|"),
+        )
+    });
+    found
+}
+
+fn find_catalog_path(
+    source: FrameId,
+    target: FrameId,
+    epoch: Epoch,
+) -> Result<Vec<FrameEdgeInfo>, FrameError> {
+    if let Some(path) = catalog_paths(source, target, epoch, true)
+        .into_iter()
+        .next()
+    {
+        return Ok(path);
+    }
+    if !catalog_paths(source, target, epoch, false).is_empty() {
+        Err(FrameError::OutsideCatalogWindow)
+    } else {
+        Err(FrameError::NoPath)
+    }
+}
+
+fn apply_catalog_edge(id: &str, xyz: [f64; 3], epoch: Epoch) -> [f64; 3] {
+    match id {
+        G2296_TO_ITRF2020
+        | "EPSG:10608:inverse"
+        | QZSS_JGS2014_TO_ITRF2014
+        | QZSS_JGS2020_TO_ITRF2020
+        | GTRF23_TO_ITRF2020
+        | BDCS2019_TO_ITRF2014 => xyz,
+        ITRF2020_TO_ITRF2014 => itrf2020_to_2014(xyz, epoch),
+        "ITRF2020:Table2:2015.0:inverse" => itrf2014_to_2020(xyz, epoch),
+        PZ9011_TO_ITRF2014 => pz9011_to_itrf2014_approx(xyz),
+        _ => unreachable!("only installed edges are evaluated"),
+    }
+}
+
+fn nominal_fallback_allowed(
+    point: &SpatialPoint,
+    reason: FrameError,
+    options: TransformOptions,
+) -> bool {
+    matches!(
+        reason,
+        FrameError::UnknownSourceRealization
+            | FrameError::UnsupportedSource(_)
+            | FrameError::OutsideCatalogWindow
+            | FrameError::NoPath
+            | FrameError::DomainNotApplicable
+    ) && (point.source_basis == SourceBasis::NavMessageAndCatalogDate
+        || options.allow_unverified_nominal)
+}
+
+fn nominal_result(
+    point: &SpatialPoint,
+    request: FrameRequest,
+    reason: FrameError,
+    options: TransformOptions,
+) -> Result<FrameResult, FrameError> {
+    qualify_path(
+        PathEvidence {
+            method: FrameMethod::UnboundedApproximate,
+            domain: PathDomain::AnyEarthFixed,
+        },
+        point,
+        options,
+    )?;
+    if options.require_velocity {
+        return Err(FrameError::VelocityUnavailable);
+    }
+    let (target, realization) = match request {
+        FrameRequest::Wgs84 => (
+            SourceFrameIdentity::GpsBroadcastWgs84,
+            if in_g2296_window(point.epoch) {
+                FrameRealization::Known(FrameId::Wgs84G2296)
+            } else {
+                FrameRealization::Unknown
+            },
+        ),
+        FrameRequest::Realization(id) => (
+            SourceFrameIdentity::Realization(id),
+            FrameRealization::Known(id),
+        ),
+    };
+    Ok(FrameResult {
+        epoch: point.epoch, source: point.source, target,
+        source_realization: point.realization, target_realization: realization,
+        position_km: point.position_km, velocity_km_s: None,
+        method: FrameMethod::UnboundedApproximate,
+        catalog_version: CATALOG_VERSION,
+        edge_ids: Vec::new(), edge_info: Vec::new(),
+        source_basis: point.source_basis, source_evidence: point.source_evidence,
+        assumption: Some(&GENERAL_NOMINAL_ASSUMPTION), fallback_reason: Some(reason),
+        position_accuracy_note: Some("CAUTION: diagnostic ECEF XYZ is copied with zero offset to the requested target label; the physical source-to-target relation and strict frame-operation error bound are unknown."),
+        velocity_note: Some("cross-frame velocity is not validated"),
+    })
 }
 
 #[allow(dead_code)] // A satellite-only edge is exercised with a synthetic candidate.
@@ -1374,7 +1300,7 @@ fn qualify_path(
             }
         },
     }
-    if options.max_position_error_m.is_some() {
+    if options.max_frame_operation_error_m.is_some() {
         return Err(FrameError::PositionBoundUnavailable);
     }
     Ok(())
@@ -1399,11 +1325,12 @@ fn native_result(
         velocity_km_s: point.velocity_km_s,
         method: FrameMethod::Native,
         catalog_version: CATALOG_VERSION,
-        edge_ids: NATIVE_EDGES,
-        edge_info: NATIVE_INFO,
+        edge_ids: NATIVE_EDGES.to_vec(),
+        edge_info: NATIVE_INFO.to_vec(),
         source_basis: point.source_basis,
         source_evidence: point.source_evidence,
         assumption: None,
+        fallback_reason: None,
         position_accuracy_note: None,
         velocity_note: None,
     })
@@ -1624,7 +1551,7 @@ mod tests {
                 evidence,
                 &nav,
                 TransformOptions {
-                    max_position_error_m: Some(2.0),
+                    max_frame_operation_error_m: Some(2.0),
                     ..Default::default()
                 }
             ),

@@ -4,7 +4,8 @@ use rinex::{
     navigation::rinex::{
         selection::{NativeFrame, UnknownHealthPolicy},
         spatial_state::{
-            FrameError, FrameMethod, FrameRealization, FrameRequest, SourceFrameIdentity,
+            FrameError, FrameMethod, FrameRealization, FrameRequest, PositionStatus,
+            SourceFrameIdentity,
         },
     },
     prelude::{Duration, Rinex, SV},
@@ -80,10 +81,15 @@ fn real_navic_wgs84_family_is_not_gps_broadcast_identity() {
         native.state.source(),
         SourceFrameIdentity::NavicBroadcastWgs84
     );
+    let result = native.state.to_frame(FrameRequest::Wgs84).unwrap();
+    assert_eq!(result.position_status(), PositionStatus::NominalAssumption);
     assert_eq!(
-        native.state.to_frame(FrameRequest::Wgs84).unwrap_err(),
-        FrameError::UnsupportedSource(SourceFrameIdentity::NavicBroadcastWgs84)
+        result.fallback_reason,
+        Some(FrameError::UnsupportedSource(
+            SourceFrameIdentity::NavicBroadcastWgs84
+        ))
     );
+    assert_eq!(result.source_realization, FrameRealization::Unknown);
 }
 
 #[test]
@@ -121,10 +127,10 @@ fn real_fdma_and_sbas_keep_their_message_and_source_identity() {
         } else {
             FrameError::UnsupportedSource(expected)
         };
-        assert_eq!(
-            native.state.to_frame(FrameRequest::Wgs84).unwrap_err(),
-            expected_error
-        );
+        let result = native.state.to_frame(FrameRequest::Wgs84).unwrap();
+        assert_eq!(result.position_status(), PositionStatus::NominalAssumption);
+        assert_eq!(result.fallback_reason, Some(expected_error));
+        assert_eq!(result.position_km, native.state.position_km);
     }
 }
 

@@ -135,7 +135,7 @@ fn caller_asserted_jgs_uses_the_same_edge_and_rejects_unsupported_requests() {
         ),
         (
             TransformOptions {
-                max_position_error_m: Some(100.0),
+                max_frame_operation_error_m: Some(100.0),
                 ..Default::default()
             },
             FrameError::PositionBoundUnavailable,
@@ -169,16 +169,20 @@ fn caller_asserted_jgs_uses_the_same_edge_and_rejects_unsupported_requests() {
             .unwrap_err(),
         FrameError::UnknownSourceRealization
     );
+    let composed = FrameTransformer
+        .to_frame(
+            &asserted,
+            FrameRequest::Realization(FrameId::Itrf2020),
+            TransformOptions::default(),
+        )
+        .unwrap();
     assert_eq!(
-        FrameTransformer
-            .to_frame(
-                &asserted,
-                FrameRequest::Realization(FrameId::Itrf2020),
-                TransformOptions::default(),
-            )
-            .unwrap_err(),
-        FrameError::NoPath
+        composed.position_status(),
+        rinex::navigation::rinex::spatial_state::PositionStatus::MarkedApproximation
     );
+    assert_eq!(composed.edge_ids.len(), 2);
+    assert_eq!(composed.info()[0].source, FrameId::QzssJgsItrf2014Aligned);
+    assert_eq!(composed.info()[1].target, FrameId::Itrf2020);
 }
 
 #[test]

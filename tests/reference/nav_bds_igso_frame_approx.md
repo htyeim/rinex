@@ -27,7 +27,7 @@ frozen 2022 parameters because a dated rate model and full convention for
 that operation were not established. No satellite-position error bound is
 claimed. The result is `UnboundedApproximate`, includes `CAUTION`, and has
 no target-frame velocity. `NumericalOnly`, any strict
-`max_position_error_m`, and `require_velocity` reject. A direct point
+`max_frame_operation_error_m`, and `require_velocity` reject. A direct point
 caller must assert `Realization(FrameId::Bdcs2019v01)`; the generic
 `BeidouBroadcast` identity remains unresolved. C20 D1 MEO is covered in a
 [separate dated unit](nav_bds_meo_frame_approx.md); other BeiDou orbit/message

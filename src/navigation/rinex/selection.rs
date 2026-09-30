@@ -63,6 +63,8 @@ pub struct NavCandidate<'a> {
     pub clock_reference: Epoch,
     pub validity_half_window: Option<Duration>,
     pub native_frame: Option<NativeFrame>,
+    /// Interpreted message health: Some(true) healthy, Some(false) unhealthy.
+    pub health: Option<bool>,
     pub rejection: Option<NavRejection>,
 }
 
@@ -192,6 +194,7 @@ impl Rinex {
                 clock_reference: key.epoch,
                 validity_half_window: supported.then_some(Duration::from_seconds(7200.0)),
                 native_frame: supported.then_some(NativeFrame::GpsBroadcastWgs84),
+                health,
                 rejection,
             };
             if rejection.is_none() && candidate.native_state_at(t).is_err() {
@@ -270,6 +273,7 @@ impl Rinex {
                 clock_reference: key.epoch,
                 validity_half_window: supported.then_some(Duration::from_seconds(900.0)),
                 native_frame: supported.then_some(NativeFrame::GlonassBroadcastPz90),
+                health,
                 rejection,
             };
             if rejection.is_none() && candidate.fdma_state_at(t).is_err() {

@@ -18,6 +18,7 @@ use std::str::FromStr;
 
 const FIXTURE: &str = "tests/fixtures/nav_sbas_s27_2023071.rnx";
 const EXPECTED: &str = include_str!("reference/nav_sbas_s27_expected.json");
+const S27_ASSUMPTION_ID: &str = "rinex:GAGAN-S27:unknown-WGS84-to-nominal-ITRF2014:zero-v1";
 
 fn toc() -> Epoch {
     Epoch::from_str("2023-03-12T01:15:44 GPST").unwrap()
@@ -108,7 +109,7 @@ fn strict_and_unsupported_requests_reject_s27_assumption() {
         ),
         (
             TransformOptions {
-                max_position_error_m: Some(1_000.0),
+                max_frame_operation_error_m: Some(1_000.0),
                 ..Default::default()
             },
             FrameError::PositionBoundUnavailable,
@@ -132,11 +133,15 @@ fn strict_and_unsupported_requests_reject_s27_assumption() {
         FrameRequest::Wgs84,
         FrameRequest::Realization(FrameId::Itrf2020),
     ] {
+        let result = FrameTransformer
+            .to_frame(&point, request, TransformOptions::default())
+            .unwrap();
+        assert_ne!(result.assumption.unwrap().id, S27_ASSUMPTION_ID);
         assert_eq!(
-            FrameTransformer
-                .to_frame(&point, request, TransformOptions::default())
-                .unwrap_err(),
-            FrameError::UnsupportedSource(SourceFrameIdentity::SbasBroadcast)
+            result.fallback_reason,
+            Some(FrameError::UnsupportedSource(
+                SourceFrameIdentity::SbasBroadcast
+            ))
         );
     }
     let asserted = SpatialPoint::new(
@@ -158,7 +163,7 @@ fn strict_and_unsupported_requests_reject_s27_assumption() {
         FrameTransformer
             .to_frame(&outside, target(), TransformOptions::default())
             .unwrap_err(),
-        FrameError::OutsideCatalogWindow
+        FrameError::InconsistentFrame
     );
 }
 
@@ -173,11 +178,15 @@ fn altered_record_and_other_sbas_service_do_not_inherit_assumption() {
             .orbits
             .insert(field.into(), OrbitItem::F64(changed));
         let point = selected_point(&nav, SV::from_str("S27").unwrap(), toc());
+        let result = FrameTransformer
+            .to_frame(&point, target(), TransformOptions::default())
+            .unwrap();
+        assert_ne!(result.assumption.unwrap().id, S27_ASSUMPTION_ID);
         assert_eq!(
-            FrameTransformer
-                .to_frame(&point, target(), TransformOptions::default())
-                .unwrap_err(),
-            FrameError::UnsupportedSource(SourceFrameIdentity::SbasBroadcast)
+            result.fallback_reason,
+            Some(FrameError::UnsupportedSource(
+                SourceFrameIdentity::SbasBroadcast
+            ))
         );
     }
 
@@ -188,11 +197,15 @@ fn altered_record_and_other_sbas_service_do_not_inherit_assumption() {
     key.sv = SV::from_str("S26").unwrap();
     record.insert(key, frame);
     let point = selected_point(&nav, key.sv, toc());
+    let result = FrameTransformer
+        .to_frame(&point, target(), TransformOptions::default())
+        .unwrap();
+    assert_ne!(result.assumption.unwrap().id, S27_ASSUMPTION_ID);
     assert_eq!(
-        FrameTransformer
-            .to_frame(&point, target(), TransformOptions::default())
-            .unwrap_err(),
-        FrameError::UnsupportedSource(SourceFrameIdentity::SbasBroadcast)
+        result.fallback_reason,
+        Some(FrameError::UnsupportedSource(
+            SourceFrameIdentity::SbasBroadcast
+        ))
     );
 }
 

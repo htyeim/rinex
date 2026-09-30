@@ -140,7 +140,7 @@ pub fn check_asserted(expected: &str, toe_text: &str) {
         ),
         (
             TransformOptions {
-                max_position_error_m: Some(100.0),
+                max_frame_operation_error_m: Some(100.0),
                 ..Default::default()
             },
             FrameError::PositionBoundUnavailable,

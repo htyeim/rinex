@@ -82,7 +82,7 @@ fn e03_reaches_g2296_with_independent_raw_orbit_reference() {
         ),
         (
             TransformOptions {
-                max_position_error_m: Some(100.0),
+                max_frame_operation_error_m: Some(100.0),
                 ..Default::default()
             },
             FrameError::PositionBoundUnavailable,
@@ -175,7 +175,7 @@ fn jgs2020_alignment_is_dated_approximation_and_j04_remains_unselected() {
         ),
         (
             TransformOptions {
-                max_position_error_m: Some(1.0),
+                max_frame_operation_error_m: Some(1.0),
                 ..Default::default()
             },
             FrameError::PositionBoundUnavailable,
@@ -229,7 +229,7 @@ fn jgs2020_alignment_is_dated_approximation_and_j04_remains_unselected() {
 }
 
 #[test]
-fn unsupported_2024_sources_do_not_inherit_old_sample_assumptions() {
+fn unresolved_2024_sources_receive_general_nominal_diagnostic() {
     let nav = Rinex::from_file(NAV).unwrap();
     for (label, error) in [
         ("C02", FrameError::UnknownSourceRealization),
@@ -250,12 +250,15 @@ fn unsupported_2024_sources_do_not_inherit_old_sample_assumptions() {
         let chosen = selected.chosen().unwrap();
         let native = chosen.spatial_state_at(epoch()).unwrap();
         let point = SpatialPoint::from_nav(&native.state).unwrap();
+        let result = FrameTransformer
+            .to_frame(&point, FrameRequest::Wgs84, TransformOptions::default())
+            .unwrap();
         assert_eq!(
-            FrameTransformer
-                .to_frame(&point, FrameRequest::Wgs84, TransformOptions::default())
-                .unwrap_err(),
-            error,
+            result.position_status(),
+            PositionStatus::NominalAssumption,
             "{label}"
         );
+        assert_eq!(result.fallback_reason, Some(error), "{label}");
+        assert_eq!(result.position_km, native.state.position_km);
     }
 }

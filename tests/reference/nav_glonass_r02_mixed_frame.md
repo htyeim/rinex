@@ -1,3 +1,5 @@
+> Historical GLONASS unit snapshot. For the current F4 first-epoch classification, see `nav_f4_frame_paths.md`.
+
 # F2 GLONASS source unit: R02 at 2024-05-10 03:00 GPST
 
 This unit extends the existing directed PZ-90.11 → ITRF2014 approximate edge through the already installed numerical ITRF2014 → ITRF2020 and ITRF2020 → WGS84 G2296 edges. It changes positions only. The NAV record, source realization, native position, and each edge remain visible. It does not claim a physical satellite-position accuracy bound.
@@ -10,7 +12,7 @@ This unit extends the existing directed PZ-90.11 → ITRF2014 approximate edge t
 - [ITRF2020 Table 2](https://itrf.ign.fr/en/solutions/itrf2020) states ITRF2014 minus ITRF2020 at 2015.0: translation `[-1.4, -0.9, +1.4]` mm, rates `[0.0, -0.1, +0.2]` mm/Julian year, scale `-0.42` ppb, zero published rotations and rotation rates. At the point epoch, the inverse operation is `p_2020 = (p_2014 - T(t)) / (1+s)`. Its library window is 2015-01-01 through 2026-12-31 UTC.
 - [EPSG:10608](https://epsg.io/10608) publishes seven zero parameters for WGS84 G2296 → ITRF2020. The inverse ITRF2020 → G2296 therefore copies the Cartesian XYZ numerically in the library's 2024-03-04 through 2024-12-31 UTC window. EPSG's 0.01 m operation accuracy at epoch 2024.0 and ITRF parameter uncertainties are not strict satellite-position upper bounds.
 
-For the PZ edge, with coordinates converted from km to m and rotations converted from mas to radians, the coordinate-frame convention is `X' = X + rz·Y − ry·Z + dx`, `Y' = Y − rz·X + rx·Z + dy`, `Z' = Z + ry·X − rx·Y + dz`. The result converts back to km once. The complete path's status is `MarkedApproximation`, including when its final edge is numerical. `NumericalOnly`, `warnings_as_errors`, `max_position_error_m`, and `require_velocity` each reject this path for their respective reasons. Cross-frame velocity stays absent.
+For the PZ edge, with coordinates converted from km to m and rotations converted from mas to radians, the coordinate-frame convention is `X' = X + rz·Y − ry·Z + dx`, `Y' = Y − rz·X + rx·Z + dy`, `Z' = Z + ry·X − rx·Y + dz`. The result converts back to km once. The complete path's status is `MarkedApproximation`, including when its final edge is numerical. `NumericalOnly`, `warnings_as_errors`, `max_frame_operation_error_m`, and `require_velocity` each reject this path for their respective reasons. Cross-frame velocity stays absent.
 
 The independent Python reference reads the R02 fields, integrates the GLONASS J2 model with RK4 steps up to 60 seconds, and applies the published parameters without calling Rust. At the query epoch it yields native XYZ `[-13288.263885025124, 8043.228789681527, -20203.634130303984]` km and approximate G2296 XYZ `[-13288.263901624035, 8043.228789786232, -20203.634141020608]` km. The numerical test tolerance is `1e-9` km per transformed component; it checks arithmetic and sign, not physical frame accuracy.
 

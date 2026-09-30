@@ -63,8 +63,8 @@ accidentally supplied metres; the constructor rejects non-finite numbers, but
 the caller must assert the physical units and frame correctly.
 
 The IERS parameter uncertainties, the EPSG operation accuracy, and orbit
-differences do not establish a strict position upper bound for this satellite.
-`max_position_error_m` therefore fails for every cross-frame request in this
+differences do not establish a strict bound for the frame operation on this satellite position.
+`max_frame_operation_error_m` therefore fails for every cross-frame request in this
 catalogue. Cross-frame velocity is also withheld pending independent velocity
 validation, even when the native NAV state has velocity and the ITRF table
 publishes some rates. `require_velocity` fails for this path. Identity requests

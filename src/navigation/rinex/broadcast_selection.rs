@@ -167,6 +167,7 @@ impl Rinex {
                 clock_reference: key.epoch,
                 validity_half_window: half,
                 native_frame: support.map(|(_, frame, _)| frame),
+                health: status,
                 rejection,
             };
             if rejection.is_none() {
